@@ -3,7 +3,7 @@
 """
 Created on Sat Nov 16 00:27:19 2024
 
-@author: aditya
+@author: aadi
 """
 
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus

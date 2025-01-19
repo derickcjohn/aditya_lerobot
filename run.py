@@ -3,7 +3,7 @@
 """
 Created on Sat Nov 16 03:10:55 2024
 
-@author: aditya
+@author: aadi
 """
 
 from lerobot.common.policies.act.modeling_act import ACTPolicy
@@ -62,3 +62,9 @@ for _ in range(inference_time_s * fps):
     
    
 # follower_arm.write("Goal_Position", position)
+current_pos = follower_arm.read("Present_Position")
+steps = 30
+for i in range(1, steps + 1):
+    intermediate_pos = current_pos + (rest_position - current_pos) * (i / steps)
+    follower_arm.write("Goal_Position", intermediate_pos)
+    time.sleep(0.1) #try busy_wait

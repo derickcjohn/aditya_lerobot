@@ -634,7 +634,8 @@ class ManipulatorRobot:
                 "ManipulatorRobot is not connected. You need to run `robot.connect()` before disconnecting."
             )
         from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
-
+        
+        # custom torque disabled added by user:aadi
         for name in self.follower_arms:
             self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
         for name in self.leader_arms:

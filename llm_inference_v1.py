@@ -155,7 +155,7 @@ def llm_agent(
 
     @tool(return_direct=True)
     def reach_the_object():
-        """Clean the desktop.
+        """Reach the object
         """
         global policies
         do_control_loop(policies["reach_the_object"])
@@ -164,8 +164,7 @@ def llm_agent(
     
     @tool(return_direct=True)
     def policy_2():
-        """Grab orange and give it to user.
-        """
+        
         global policies
         do_control_loop(policies["policy_2"])
 
@@ -173,8 +172,7 @@ def llm_agent(
         
     @tool(return_direct=True)
     def policy_3():
-        """Grab candy and give it to user.
-        """
+
         global policies
         do_control_loop(policies["policy_3"])
 

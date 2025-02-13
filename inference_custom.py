@@ -87,7 +87,6 @@ def say(text, blocking=False):
     
         os.system(cmd)
 
-import cv2
 
 def capture_all_coordinates(robot):
         """
@@ -316,7 +315,7 @@ def object_detection(robot,object_to_detect):
         return coords_list
     
 
-manual_detection = True
+manual_detection = False
 index=0
 
 if manual_detection:
@@ -340,7 +339,7 @@ ckpt_path = "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_reach_t
 policy = ACTPolicy.from_pretrained(ckpt_path)
 policy.to(device)
 
-say("I am going to collect objects")
+# say("I am going to collect objects")
 
 
 for _ in range(inference_time_s * fps):

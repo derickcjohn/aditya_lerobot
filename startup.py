@@ -23,7 +23,7 @@ leader_arm = DynamixelMotorsBus(
         "gripper": (6, "xl330-m077"),
     },
 )
-
+    
 follower_arm = DynamixelMotorsBus(
     port=follower_port,
     motors={
@@ -44,13 +44,14 @@ robot = ManipulatorRobot(
     follower_arms={"main": follower_arm},
     calibration_dir=".cache/calibration/koch",
     cameras={
-        "phone": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
-        "laptop": OpenCVCamera("/dev/video4", fps=30, width=640, height=480),
+        "phone": OpenCVCamera("/dev/video12", fps=30, width=640, height=480),
+        "laptop": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
     },
 )
 robot.connect()
 rest_position = follower_arm.read("Present_Position")
 
 #ffplay -f video4linux2 -framerate 10 -video_size 480x270 /dev/video10
+# [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
 
-
+# [ -2.9882812  136.05469    179.29688     1.7578125    -7.1191406  34.804688 ]

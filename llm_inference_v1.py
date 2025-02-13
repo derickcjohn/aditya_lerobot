@@ -113,7 +113,7 @@ def llm_agent(
     chain_path: str | None = None,
     fps: int | None = None, 
     teleop_time_s: float | None = None, 
-    display_cameras: bool = True,
+    display_cameras: bool = False,
     typing: bool = False
 ):
     import pyttsx3
@@ -138,9 +138,9 @@ def llm_agent(
 
 
     models = {
-        "reach_the_object":  {"repo_id": "aadi/reach_the_object", "control_time_s": 10},
-         "policy_2": {"repo_id": "aadi/policy_2", "control_time_s": 10}, 
-         "policy_3":{"repo_id": "aadi/policy_3", "control_time_s": 10}
+        "reach_the_object":  {"repo_id": "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_reach_the_object/checkpoints/last/pretrained_model", "control_time_s": 10},
+         # "policy_2": {"repo_id": "aadi/policy_2", "control_time_s": 10}, 
+         # "policy_3":{"repo_id": "aadi/policy_3", "control_time_s": 10}
     }
 
     global policies 
@@ -148,7 +148,7 @@ def llm_agent(
 
     for model_name in models:
         model = models[model_name]
-        policy_overrides = ["device=cpu"]
+        policy_overrides = ["device=cuda"]
         policy, policy_fps, device, use_amp = init_policy(model["repo_id"], policy_overrides)
         policies[model_name] = ({"policy": policy, "policy_fps": policy_fps, "device": device, "use_amp": use_amp, "control_time_s": model["control_time_s"]})
 
@@ -162,20 +162,36 @@ def llm_agent(
 
         return "Done"
     
-    @tool(return_direct=True)
-    def policy_2():
+    # @tool(return_direct=True)
+    # def policy_2():
         
-        global policies
-        do_control_loop(policies["policy_2"])
+    #     global policies
+    #     do_control_loop(policies["policy_2"])
 
-        return "Done"
+    #     return "Done"
         
+    # @tool(return_direct=True)
+    # def policy_3():
+
+    #     global policies
+    #     do_control_loop(policies["policy_3"])
+
+    #     return "Done"
+    
     @tool(return_direct=True)
-    def policy_3():
-
-        global policies
-        do_control_loop(policies["policy_3"])
-
+    def go_to_home_position(rest_position=rest_position):
+        """Go back to home position.
+        """
+        
+        print(rest_position)
+        current_pos = robot.follower_arms['main'].read("Present_Position")
+        print(current_pos)
+        steps = 30
+        for i in range(1, steps + 1):
+                intermediate_pos = current_pos + (rest_position - current_pos) * (i / steps)
+                robot.follower_arms['main'].write("Goal_Position", intermediate_pos)
+                time.sleep(0.1) #try busy_wait
+                
         return "Done"
 
     @tool(return_direct=True)
@@ -185,9 +201,12 @@ def llm_agent(
 
         llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
 
-        cam1 = OpenCVCamera(camera_index=0, fps=30, width=640, height=480, color_mode="bgr")
-        cam1.connect()
-        img = cam1.read()
+        observation = robot.capture_observation()
+        image_keys = [key for key in observation if "image" in key]
+        for key in image_keys:
+            if "phone" in key:
+                img = cv2.imread(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
+        
         
         # cv2.imshow("Image", img)
         # cv2.waitKey(0)
@@ -237,7 +256,8 @@ def llm_agent(
 
     llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
 
-    tools = [reach_the_object, policy_2, policy_3, describe_area]
+    # tools = [reach_the_object, policy_2, policy_3, describe_area]
+    tools = [reach_the_object,describe_area,go_to_home_position]
 
     agent = create_tool_calling_agent(llm, tools, agent_prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
@@ -344,7 +364,7 @@ def record(
     num_image_writer_processes=1,
     num_image_writer_threads_per_camera=1,
     force_override=False,
-    display_cameras=True,
+    display_cameras=False,
     play_sounds=True,
 ):
     # TODO(rcadene): Add option to record logs
@@ -694,6 +714,9 @@ if __name__ == "__main__":
 
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
+    robot.connect()
+    rest_position = robot.follower_arms['main'].read("Present_Position")
+    robot.disconnect()
 
     if control_mode == "calibrate":
         calibrate(robot, **kwargs)

@@ -30,6 +30,7 @@ from lerobot.scripts.control_robot import busy_wait
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 
 
+
 ################################################################################
 # Global variables
 ################################################################################
@@ -118,7 +119,7 @@ def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
     This is a STUB—adjust the bounding box logic to your needs.
     """
     # Configure your API key
-    GOOGLE_API_KEY = "AIzaSyBzC0kdp5WKkhaHQVWvqpFdvoCGCvdyCIE"  # <-- Replace with your actual key
+    GOOGLE_API_KEY = "xADD YOU KEY HERE"  # <-- Replace with your actual key
     genai.configure(api_key=GOOGLE_API_KEY)
     
     # Convert OpenCV (BGR) image to PIL (RGB)

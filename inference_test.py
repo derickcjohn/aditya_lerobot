@@ -30,7 +30,6 @@ from lerobot.scripts.control_robot import busy_wait
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 
 
-
 ################################################################################
 # Global variables
 ################################################################################
@@ -112,16 +111,16 @@ def on_mouse_double_click(event, x, y, flags, param):
 
 def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
     """
-    Example function that uses PaLM API (via google.generativeai) 
+    Example function that uses PaLM API (via google.generativeai)
     to detect bounding boxes or centroids for 'object_to_detect' in `image`.
     Returns a list of (centroid_x, centroid_y).
 
     This is a STUB—adjust the bounding box logic to your needs.
     """
     # Configure your API key
-    GOOGLE_API_KEY = "xADD YOU KEY HERE"  # <-- Replace with your actual key
+    GOOGLE_API_KEY = "AIzaSyBzC0kdp5WKkhaHQVWvqpFdvoCGCvdyCIE"
     genai.configure(api_key=GOOGLE_API_KEY)
-    
+
     # Convert OpenCV (BGR) image to PIL (RGB)
     cv_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(cv_rgb)
@@ -129,7 +128,7 @@ def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
     height, width, _ = image.shape
     
     # Example prompt. Adjust to your actual bounding-box logic.
-    prompt=f"""Please detect {object_to_detect} in this image. For each object, output:
+    prompt = f"""Please detect {object_to_detect} in this image. For each object, output:
          
         1. The object label created (e.g., "phone", "cable").
         2. Its bounding box in [y_min, x_min, y_max, x_max] format.
@@ -165,7 +164,6 @@ def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
 
         # Here we're assuming the model might have returned normalized coords
         # or something in the range 1000, etc. Adjust as needed.
-        # (This part depends on how your PaLM plugin returns coordinates.)
         y_min_pix = int((y_min / 1000.0) * height)
         x_min_pix = int((x_min / 1000.0) * width)
         y_max_pix = int((y_max / 1000.0) * height)
@@ -175,8 +173,11 @@ def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
         centroid_y = (y_min_pix + y_max_pix) // 2
 
         coords_list.append((centroid_x, centroid_y))
+    
+    coords_list.sort(key=lambda coord: coord[0])
 
     return coords_list
+
 
 ################################################################################
 # Thread: Camera Loop
@@ -223,7 +224,150 @@ def camera_thread_func(robot):
     # Cleanup
     cv2.destroyAllWindows()
     print("[Camera Thread] Exiting camera loop.")
-    
+
+
+################################################################################
+# Detection Function
+################################################################################
+
+def detect_target_coords():
+    """
+    Detects the target coordinate either manually (by double-click) or 
+    via AI (object_detection function). Updates the global clicked_coords 
+    if applicable, and returns the final chosen coordinate (or None).
+    """
+    global clicked_coords, manual_detection, img_buffer
+
+    coords_list = []
+
+    # If user is manually detecting via double-click
+    if manual_detection:
+        say("Please double-click on the phone window to mark your object. Press ENTER once done.")
+        print("[Manual Detection] Press ENTER in terminal once done selecting points.")
+
+        def on_release_enter(key):
+            if key == Key.enter:
+                return False
+
+        # Wait until user presses ENTER
+        with Listener(on_release=on_release_enter) as listener:
+            listener.join()
+
+        # Now we have clicked_coords if the user double-clicked
+        if clicked_coords is not None:
+            coords_list = [clicked_coords]
+        else:
+            print("[Manual Detection] No point was clicked.")
+
+    # Otherwise, use AI-based detection
+    else:
+        object_to_detect = input("Enter object prompt to detect: ")
+        frame_phone = img_buffer["phone"]
+        if frame_phone is not None:
+            frame_bgr = cv2.cvtColor(frame_phone, cv2.COLOR_RGB2BGR)
+            coords_list = object_detection(frame_bgr, object_to_detect)
+            print("[AI Detection] coords_list:", coords_list)
+        else:
+            print("[AI Detection] No phone frame in buffer!")
+
+    # If multiple coords, let user choose
+    if len(coords_list) > 1:
+        print("Multiple objects found. Indices from left to right:")
+        for idx, c in enumerate(coords_list):
+            print(f"  Index={idx}, coords={c}")
+        chosen_idx = int(input("Choose index to track: "))
+        if 0 <= chosen_idx < len(coords_list):
+            coords_list = [coords_list[chosen_idx]]
+        else:
+            print("[AI Detection] Invalid index. Defaulting to the first.")
+            coords_list = [coords_list[0]]
+
+    # Either set clicked_coords to the chosen detection or None
+    if coords_list:
+        clicked_coords = coords_list[0]
+    else:
+        clicked_coords = None
+
+    return clicked_coords
+
+
+################################################################################
+# Helper: Go to Home Position
+################################################################################
+
+def go_to_home_position(robot, rest_position):
+    """
+    Moves the follower_arm from its current position to `rest_position`
+    in `steps` small increments.
+    """
+    current_pos = robot.follower_arms['main'].read("Present_Position")
+    steps=30
+    for i in range(1, steps + 1):
+        alpha = i / steps
+        intermediate_pos = current_pos + alpha * (rest_position - current_pos)
+        robot.follower_arms['main'].write("Goal_Position", intermediate_pos)
+        time.sleep(0.05)
+
+
+################################################################################
+# Inference Function
+################################################################################
+
+def run_inference(robot, rest_position):
+    """
+    Perform the entire model-loading and inference loop, then
+    return the arm to the rest position. This includes drawing
+    the user-selected marker onto the phone image during inference.
+    """
+    global clicked_coords
+
+    inference_time_s = 10
+    fps = 30
+    device = "cuda"  # or "cpu"
+
+    ckpt_path = "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_reach_the_object/checkpoints/last/pretrained_model"
+    # ckpt_path = "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_follow_marker_2/last/pretrained_model"
+
+    policy = ACTPolicy.from_pretrained(ckpt_path)
+    policy.to(device)
+
+    print(f"Running inference for {inference_time_s} seconds...")
+    for _ in range(int(inference_time_s * fps)):
+        t0 = time.perf_counter()
+
+        # Get observation
+        observation = robot.capture_observation()
+
+        # Convert images to the correct shape/range, add marker if needed
+        for name in observation:
+            if "image" in name:
+                if clicked_coords is not None and "phone" in name:
+                    # Convert to BGR, draw marker, convert back
+                    img_bgr = cv2.cvtColor(observation[name].numpy(), cv2.COLOR_RGB2BGR)
+                    put_the_marker(img_bgr, clicked_coords)
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                    observation[name] = torch.from_numpy(img_rgb)
+
+                # Convert from [H,W,C] in [0..255] to float32 in [0..1], permute dims
+                observation[name] = observation[name].type(torch.float32) / 255
+                observation[name] = observation[name].permute(2, 0, 1).contiguous()
+
+            observation[name] = observation[name].unsqueeze(0)
+            observation[name] = observation[name].to(device)
+        
+        # Compute the next action with the policy
+        action = policy.select_action(observation)
+        action = action.squeeze(0).to("cpu")
+        robot.send_action(action)
+
+        # Keep constant fps
+        dt = time.perf_counter() - t0
+        busy_wait(max(0, 1.0 / fps - dt))
+
+    print("[Inference] Complete. Returning to rest position.")
+    # Use the helper function to move home
+    go_to_home_position(robot, rest_position)
+
 
 ################################################################################
 # Main
@@ -277,8 +421,9 @@ def main():
 
     robot.connect()
 
-    rest_position = follower_arm.read("Present_Position")
-    
+    # Read the rest position here so we can pass it to the inference function
+    # rest_position = follower_arm.read("Present_Position")
+    rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
 
     #######################################################
     # Start Camera Thread
@@ -290,112 +435,14 @@ def main():
     time.sleep(2.0)
 
     #######################################################
-    # DETECTION (Manual or AI)
+    # DETECTION (Manual or AI) as a function
     #######################################################
-    coords_list = []
-    if manual_detection:
-        # If user is manually detecting via double-click
-        say("Please double-click on the phone window to mark your object. Press ENTER once done.")
-        print("[Manual Detection] Press ENTER in terminal once done selecting points.")
-
-        def on_release_enter(key):
-            if key == Key.enter:
-                return False
-
-        with Listener(on_release=on_release_enter) as listener:
-            listener.join()
-
-        # Now we have clicked_coords if user double-clicked
-        if clicked_coords is not None:
-            coords_list = [clicked_coords]
-        else:
-            print("[Manual Detection] No point was clicked.")
-    else:
-        # AI-based detection
-        object_to_detect = input("Enter object prompt to detect: ")
-        frame_phone = img_buffer["phone"]
-        if frame_phone is not None:
-            frame_bgr = cv2.cvtColor(frame_phone, cv2.COLOR_RGB2BGR)
-            coords_list = object_detection(frame_bgr, object_to_detect)
-            print("[AI Detection] coords_list:", coords_list)
-        else:
-            print("[AI Detection] No phone frame in buffer!")
-
-    # If multiple coords, let user choose
-    if len(coords_list) > 1:
-        print("Multiple objects found. Indices:")
-        for idx, c in enumerate(coords_list):
-            print(f"  Index={idx}, coords={c}")
-        chosen_idx = int(input("Choose index to track: "))
-        if 0 <= chosen_idx < len(coords_list):
-            coords_list = [coords_list[chosen_idx]]
-        else:
-            print("[AI Detection] Invalid index. Defaulting to the first.")
-            coords_list = [coords_list[0]]
-
-    # Either set clicked_coords to the chosen detection or None
-    if coords_list:
-        clicked_coords = coords_list[0]
-        # print(f"[AI/Manual Detection] Marking coords: {clicked_coords}")
-    else:
-        clicked_coords = None
+    detect_target_coords()  # sets clicked_coords internally
 
     #######################################################
-    # INFERENCE (ACTPolicy)
+    # RUN INFERENCE
     #######################################################
-    inference_time_s = 30
-    fps = 30
-    device = "cuda"  # or "cpu"
-    ckpt_path = "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_reach_the_object/checkpoints/last/pretrained_model"
-    # ckpt_path = "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_follow_marker_2/last/pretrained_model"
-    
-    policy = ACTPolicy.from_pretrained(ckpt_path)
-    policy.to(device)
-
-    print(f"Running inference for {inference_time_s} seconds...")
-    for _ in range(int(inference_time_s * fps)):
-        t0 = time.perf_counter()
-
-        # Get observation
-        observation = robot.capture_observation()
-
-        # Convert images to the correct shape/range
-        for name in observation:
-            if "image" in name:
-                
-                if coords_list is not None and "phone" in name:
-                    img_bgr = cv2.cvtColor(observation[name].numpy(), cv2.COLOR_RGB2BGR)
-                    # OpenCV expects (x, y) as (center_x, center_y)
-                    # print(f" Marked coords: {clicked_coords}")
-                    put_the_marker(img_bgr,clicked_coords)
-                    img_rgb = cv2.cvtColor(observation[name].numpy(), cv2.COLOR_BGR2RGB)
-                    observation[name] = torch.from_numpy(img_rgb)
-            
-                    
-                observation[name] = observation[name].type(torch.float32) / 255
-                observation[name] = observation[name].permute(2, 0, 1).contiguous()
-            observation[name] = observation[name].unsqueeze(0)
-            observation[name] = observation[name].to(device)
-        
-        # Compute the next action with the policy
-        # based on the current observation
-        action = policy.select_action(observation)
-        action = action.squeeze(0).to("cpu")
-        robot.send_action(action)
-
-        # Keep constant fps
-        dt = time.perf_counter() - t0
-        busy_wait(max(0, 1.0 / fps - dt))
-
-    # Return to rest
-    print("[Inference] Complete. Returning to rest position.")
-    current_pos = follower_arm.read("Present_Position")
-    steps = 30
-    for i in range(1, steps + 1):
-        alpha = i / steps
-        intermediate_pos = current_pos + alpha*(rest_position - current_pos)
-        follower_arm.write("Goal_Position", intermediate_pos)
-        time.sleep(0.05)
+    run_inference(robot, rest_position)
 
     # Cleanup
     say("Done.")

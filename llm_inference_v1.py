@@ -714,9 +714,10 @@ if __name__ == "__main__":
 
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
-    robot.connect()
-    rest_position = robot.follower_arms['main'].read("Present_Position")
-    robot.disconnect()
+    # robot.connect()
+    # rest_position = robot.follower_arms['main'].read("Present_Position")
+    rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
+    # robot.disconnect()
 
     if control_mode == "calibrate":
         calibrate(robot, **kwargs)

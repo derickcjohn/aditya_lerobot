@@ -7,6 +7,7 @@ Created on Sat Nov 16 00:27:19 2024
 """
 
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+import time
 
 leader_port = "/dev/ttyACM1"
 follower_port = "/dev/ttyACM0"
@@ -49,7 +50,8 @@ robot = ManipulatorRobot(
     },
 )
 robot.connect()
-rest_position = follower_arm.read("Present_Position")
+# rest_position = follower_arm.read("Present_Position")
+rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
 
 #ffplay -f video4linux2 -framerate 10 -video_size 480x270 /dev/video10
 # [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]

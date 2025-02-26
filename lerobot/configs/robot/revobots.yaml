@@ -1,14 +1,19 @@
-#Created on Wed Feb 12 23:01:42 2025
-
+#Created on Sun Feb 23 03:43:07 2025
 #@author: aadi
+# revobots.yaml
 
-_target_: lerobot.common.robot_devices.robots.manipulator.ManipulatorRobot
+# Whether to use the Revobot (socket-based) arms for leader, follower, or both.
+# If false, we use normal Dynamixel arms for Koch.
+use_revobot_leader: False
+use_revobot_follower: False
+
+_target_: lerobot.common.robot_devices.robots.revobots_manipulator.RevobotsManipulatorRobot
+
+
+# Normal Koch config
 robot_type: koch
 calibration_dir: .cache/calibration/koch
 
-# `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-# Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
-# the number of motors in your follower arms.
 max_relative_target: null
 
 leader_arms:
@@ -58,12 +63,40 @@ cameras:
     height: 480
   effector_right:
     _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
-    camera_index: 16
+    camera_index: 12
     fps: 30
     width: 640
     height: 480
 
-# ~ Koch specific settings ~
-# Sets the leader arm in torque mode with the gripper motor set to this angle. This makes it possible
-# to squeeze the gripper and have it spring back to an open position on its own.
+# Socket config for Revobot if we want to use it. 
+# We just keep it here so we can set IP/port for either leader or follower.
+# Revobot arms definitions (socket details are embedded within the arm definitions)
+revobot_leader_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.revomotors.RevobotRobotBus
+    socket_ip: "127.0.0.1"
+    socket_port: 5050
+    motors:
+      shoulder_pan: [1, "a"]
+      shoulder_lift: [2, "a"]
+      elbow_flex: [3, "a"]
+      wrist_flex: [4, "a"]
+      wrist_roll: [5, "a"]
+      gripper: [6, "a"]
+
+
+revobot_follower_arms:
+  main:
+    _target_: lerobot.common.robot_devices.motors.revomotors.RevobotRobotBus
+    socket_ip: "127.0.0.1"
+    socket_port: 5051
+    motors:
+      shoulder_pan: [1, "a"]
+      shoulder_lift: [2, "a"]
+      elbow_flex: [3, "a"]
+      wrist_flex: [4, "a"]
+      wrist_roll: [5, "a"]
+      gripper: [6, "a"]
+      
+
 gripper_open_degree: 35.156

@@ -40,12 +40,12 @@ python lerobot/scripts/control_robot.py record \
   
   
   DATA_DIR=data python lerobot/scripts/train.py \
-  --dataset_repo_id=${HF_USER}/koch_reach_the_object \
-  --policy=act_koch_real \
-  --env=koch_real \
-  --hydra.run.dir=outputs/train/act_koch_reach_the_object \
-  --hydra.job.name=act_koch_test \
-  --device=cuda
+  dataset_repo_id=${HF_USER}/koch_reach_the_object \
+  policy=act_koch_real \
+  env=koch_real \
+  hydra.run.dir=outputs/train/act_koch_reach_the_object \
+  hydra.job.name=act_koch_test \
+  device=cuda
   
   
   python lerobot/scripts/control_robot.py teleoperate \

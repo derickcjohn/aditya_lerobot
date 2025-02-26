@@ -45,7 +45,7 @@ robot = ManipulatorRobot(
     follower_arms={"main": follower_arm},
     calibration_dir=".cache/calibration/koch",
     cameras={
-        "phone": OpenCVCamera("/dev/video12", fps=30, width=640, height=480),
+        "phone": OpenCVCamera("/dev/video4", fps=30, width=640, height=480),
         "laptop": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
     },
 )

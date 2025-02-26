@@ -25,6 +25,7 @@ from pynput.keyboard import Key, Listener
 # Robot-specific imports
 from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
+from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 from lerobot.scripts.control_robot import busy_wait
 from lerobot.common.policies.act.modeling_act import ACTPolicy
@@ -35,7 +36,7 @@ from lerobot.common.policies.act.modeling_act import ACTPolicy
 ################################################################################
 
 program_ending = False
-manual_detection = True  # If True -> double-click in "phone" window for coords
+manual_detection = False  # If True -> double-click in "phone" window for coords
 
 # In manual_detection mode, we store the user's double-click here
 clicked_coords = None  # Will hold (x, y) or None
@@ -414,8 +415,10 @@ def main():
         follower_arms={"main": follower_arm},
         calibration_dir=".cache/calibration/koch",
         cameras={
-            "phone": OpenCVCamera("/dev/video12", fps=30, width=640, height=480),
-            "laptop": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
+            # "phone": OpenCVCamera("/dev/video12", fps=30, width=640, height=480),
+            # "laptop": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
+            "phone": IntelRealSenseCamera("828612060404", fps=30, width=640, height=480),
+            "laptop": IntelRealSenseCamera("816612060176", fps=30, width=640, height=480),
         },
     )
 

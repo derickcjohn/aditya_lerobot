@@ -338,7 +338,6 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
 def reach_the_object(object_prompt: str = "object"):
     """
     Runs the inference control loop to reach the target object using AI-based detection.
-    If multiple objects are detected, you'll be asked which one to use.
     """
     global policies, robot, rest_position, clicked_coords
     detect_target_coords(mode="ai", object_to_detect=object_prompt)

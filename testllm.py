@@ -7,7 +7,6 @@ Created on Wed Feb 13 15:04:02 2025
 """
 
 import os
-import sys
 import cv2
 import time
 import torch
@@ -16,10 +15,10 @@ import threading
 from PIL import Image
 from typing import List
 import numpy as np
-import speech_recognition as sr
 import base64
 from dotenv import load_dotenv, find_dotenv
 import argparse
+import math
 
 # For generative AI bounding-box detection (if needed)
 import google.generativeai as genai
@@ -34,7 +33,7 @@ from lerobot.common.utils.utils import init_hydra_config
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 
-# LangChain / ChatGPT Agent imports (as requested)
+# LangChain / ChatGPT Agent imports
 from langchain.schema import SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -51,7 +50,11 @@ from langchain_openai import ChatOpenAI
 
 program_ending = False
 clicked_coords = None    # Will hold (x, y) or None
-use_manual_detection = None  # Global flag: True if user chooses manual detection
+use_manual_detection = False  # Global flag for manual detection
+angle = 0
+
+# Global to store if we are in typing mode (default is False)
+typing_mode = False
 
 # Store latest frames for cameras
 img_buffer = {"phone": None, "laptop": None}
@@ -66,25 +69,33 @@ policies = {}  # Dictionary to hold policy configurations
 ################################################################################
 
 def say(text, blocking=False):
-    """
-    Simple TTS wrapper that works on macOS, Linux, or Windows.
-    """
-    if platform.system() == "Darwin":
-        cmd = f'say "{text}"'
-    elif platform.system() == "Linux":
-        cmd = f'spd-say "{text}"'
-    elif platform.system() == "Windows":
-        cmd = (
-            'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
-            f'(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{text}\')"'
-        )
-    else:
-        print(f"(say) OS not recognized. Printing text: {text}")
-        return
+    # """
+    # Simple TTS wrapper that works on macOS, Linux, or Windows.
+    # """
+    # if platform.system() == "Darwin":
+    #     cmd = f'say "{text}"'
+    # elif platform.system() == "Linux":
+    #     cmd = f'spd-say "{text}"'
+    # elif platform.system() == "Windows":
+    #     cmd = (
+    #         'PowerShell -Command "Add-Type -AssemblyName System.Speech; '
+    #         f'(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{text}\')"'
+    #     )
+    # else:
+    #     print(f"(say) OS not recognized. Printing text: {text}")
+    #     return
 
-    if not blocking and platform.system() in ["Darwin", "Linux"]:
-        cmd += " &"
-    os.system(cmd)
+    # if not blocking and platform.system() in ["Darwin", "Linux"]:
+    #     cmd += " &"
+    # os.system(cmd)
+    pass
+
+def update_angle(key):
+    global angle
+    if key == Key.left:
+        angle -= 2
+    elif key == Key.right:
+        angle += 2
 
 def put_the_marker(image: np.ndarray, coords: tuple, radius=10,
                    border_color=(0, 0, 255), cross_color=(0, 0, 255),
@@ -94,18 +105,38 @@ def put_the_marker(image: np.ndarray, coords: tuple, radius=10,
     """
     if coords is None:
         return image
-
+    global angle
     x, y = coords
-    cv2.circle(image, (x, y), radius, bg_color, -1)
-    cv2.circle(image, (x, y), radius, border_color, 2)
-    cv2.line(image, (x, y - (radius - 1)), (x, y + (radius - 1)), cross_color, 2)
-    cv2.line(image, (x - (radius - 1), y), (x + (radius - 1), y), cross_color, 2)
+    center = (x, y)
+    cv2.circle(image, center, radius, bg_color, -1)
+    cv2.circle(image, center, radius, border_color, 2)
+    cv2.line(image, center,
+             (x - int(math.sin(math.radians(angle)) * radius),
+              y + int(math.cos(math.radians(angle)) * radius)),
+             cross_color, 2)
+    cv2.line(image, center,
+             (x - int(math.cos(math.radians(angle)) * radius),
+              y - int(math.sin(math.radians(angle)) * radius)),
+             cross_color, 2)
+    cv2.line(image, center,
+             (x + int(math.cos(math.radians(angle)) * radius),
+              y + int(math.sin(math.radians(angle)) * radius)),
+             cross_color, 2)
+    cv2.line(image, center,
+             (x + int(math.sin(math.radians(angle)) * radius),
+              y - int(math.cos(math.radians(angle)) * radius)),
+             cross_color, 2)
+    cv2.arrowedLine(image,
+                    (x + int(math.cos(math.radians(angle)) * radius),
+                     y + int(math.sin(math.radians(angle)) * radius)),
+                    (x + int(math.cos(math.radians(angle)) * 25),
+                     y + int(math.sin(math.radians(angle)) * 25)),
+                    cross_color, 4, tipLength=0.75)
     return image
 
 def on_mouse_double_click(event, x, y, flags, param):
     """
-    Mouse callback that captures the (x, y) on double-click.
-    Only updates clicked_coords if manual detection is active.
+    Mouse callback used in manual mode.
     """
     global clicked_coords, use_manual_detection
     if use_manual_detection and event == cv2.EVENT_LBUTTONDBLCLK:
@@ -114,11 +145,8 @@ def on_mouse_double_click(event, x, y, flags, param):
 
 def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
     """
-    Example function that uses PaLM API (via google.generativeai)
-    to detect bounding boxes or centroids for 'object_to_detect' in `image`.
-    Returns a list of (centroid_x, centroid_y).
-
-    This is a STUB—adjust the bounding box logic to your needs.
+    Uses generative AI (via google.generativeai) to detect bounding boxes for the
+    given `object_to_detect` in `image`. Returns a list of centroids as (x, y).
     """
     GOOGLE_API_KEY = "AIzaSyBzC0kdp5WKkhaHQVWvqpFdvoCGCvdyCIE"
     genai.configure(api_key=GOOGLE_API_KEY)
@@ -165,12 +193,12 @@ def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
 
 def camera_thread_func(robot):
     """
-    Continuously read frames from the robot's "phone" camera, update `img_buffer`, 
-    and display the frame in an OpenCV window.
+    Continuously reads frames from the robot's "phone" camera, updates `img_buffer`,
+    and displays the frame.
     """
     global program_ending, clicked_coords, use_manual_detection
     cv2.namedWindow("phone", cv2.WINDOW_NORMAL)
-    # Always set the callback; it only updates if use_manual_detection is True.
+    cv2.resizeWindow("phone", 640, 480)
     cv2.setMouseCallback("phone", on_mouse_double_click)
     while not program_ending:
         frame = robot.cameras["phone"].async_read()
@@ -186,52 +214,79 @@ def camera_thread_func(robot):
     cv2.destroyAllWindows()
     print("[Camera Thread] Exiting camera loop.")
 
-def detect_target_coords():
+def get_command(use_typing: bool):
     """
-    Detects the target coordinate either manually (by double-click) or via AI.
-    When called, it asks the user if they want to use manual detection.
-    Updates the global clicked_coords and returns it.
+    Returns a command/response from either keyboard (if use_typing is True) or voice.
     """
-    global clicked_coords, img_buffer, use_manual_detection
-    answer = input("Use manual detection for target? (y/n): ").strip().lower()
-    use_manual_detection = (answer == "y")
-    coords_list = []
-    if use_manual_detection:
-        say("Please double-click on the phone window to mark your object. Then press ENTER in terminal when done.")
-        input("Press ENTER when done selecting points...")
-        if clicked_coords is not None:
-            coords_list = [clicked_coords]
-        else:
+    if use_typing:
+        command = input("Enter your response: ")
+        return command
+    else:
+        import speech_recognition as sr
+        r = sr.Recognizer()
+        with sr.Microphone() as source:
+            print("Listening for response...")
+            audio = r.listen(source)
+        try:
+            text = r.recognize_google(audio)
+            print(f"Voice Response: {text}")
+            return text
+        except Exception as e:
+            print("Voice recognition error:", str(e))
+            return None
+
+def detect_target_coords(mode="ai", object_to_detect="object") -> tuple:
+    """
+    Detects the target coordinate.
+    In 'manual' mode, uses the previous logic: instructs you to double-click on the phone window,
+    then waits for you to press ENTER (or provide an empty response) to confirm.
+    In 'ai' mode, uses AI-based detection and, if multiple objects are found, asks which index to use.
+    """
+    global clicked_coords, img_buffer, use_manual_detection, typing_mode
+    if mode.lower() == "manual":
+        use_manual_detection = True
+        say("Please double-click on the phone window to mark your object. Then press ENTER when done selecting points.", blocking=True)
+        print("Manual detection: Please double-click on the phone window to mark your object.")
+        _ = get_command(typing_mode)  # Wait for confirmation (ENTER)
+        if clicked_coords is None:
             print("[Manual Detection] No point was clicked.")
+            return None
+        return clicked_coords
+    # Default to AI detection.
+    frame_phone = img_buffer["phone"]
+    coords_list = []
+    if frame_phone is not None:
+        frame_bgr = cv2.cvtColor(frame_phone, cv2.COLOR_RGB2BGR)
+        coords_list = object_detection(frame_bgr, object_to_detect)
+        print("[AI Detection] Detected coordinates:", coords_list)
     else:
-        object_to_detect = input("Enter object prompt to detect: ")
-        frame_phone = img_buffer["phone"]
-        if frame_phone is not None:
-            frame_bgr = cv2.cvtColor(frame_phone, cv2.COLOR_RGB2BGR)
-            coords_list = object_detection(frame_bgr, object_to_detect)
-            print("[AI Detection] coords_list:", coords_list)
-        else:
-            print("[AI Detection] No phone frame in buffer!")
-    if len(coords_list) > 1:
-        print("Multiple objects found. Indices from left to right:")
-        for idx, c in enumerate(coords_list):
-            print(f"  Index={idx}, coords={c}")
-        chosen_idx = int(input("Choose index to track: "))
-        if 0 <= chosen_idx < len(coords_list):
-            coords_list = [coords_list[chosen_idx]]
-        else:
-            print("[AI Detection] Invalid index. Defaulting to the first.")
-            coords_list = [coords_list[0]]
-    if coords_list:
-        clicked_coords = coords_list[0]
-    else:
+        print("[AI Detection] No phone frame in buffer!")
+    if not coords_list:
         clicked_coords = None
-    return clicked_coords
+        return None
+    if len(coords_list) > 1:
+        print("Multiple objects found:")
+        for idx, coord in enumerate(coords_list):
+            print(f"Index {idx}: {coord}")
+        print("Please specify which object index to select:")
+        chosen_index_str = get_command(typing_mode)
+        try:
+            chosen_index = int(chosen_index_str.strip())
+        except Exception as e:
+            print("Invalid index provided, defaulting to index 0.")
+            chosen_index = 0
+        if chosen_index < 0 or chosen_index >= len(coords_list):
+            print("Index out of range, defaulting to index 0.")
+            chosen_index = 0
+        clicked_coords = coords_list[chosen_index]
+        return clicked_coords
+    else:
+        clicked_coords = coords_list[0]
+        return clicked_coords
 
 def go_to_home_position(robot, rest_position):
     """
-    Moves the follower arm from its current position to `rest_position`
-    in small increments.
+    Moves the follower arm from its current position to `rest_position` in small increments.
     """
     current_pos = robot.follower_arms['main'].read("Present_Position")
     steps = 30
@@ -243,10 +298,9 @@ def go_to_home_position(robot, rest_position):
 
 def run_inference(robot, rest_position, chkpt, control_time_s):
     """
-    Loads the policy from the given checkpoint and runs inference (acting like a control loop)
-    for `control_time_s` seconds. At each step, the robot captures an observation, draws a marker
-    if one was selected, computes an action using the policy, and sends the action to the robot.
-    This function no longer returns the robot to the rest position automatically.
+    Loads the policy from the given checkpoint and runs a control loop for `control_time_s` seconds.
+    The robot captures an observation, marks the selected target (if any), computes an action using the policy,
+    and sends the action to the robot.
     """
     global use_manual_detection
     fps = 30
@@ -273,7 +327,7 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
         dt = time.perf_counter() - t0
         busy_wait(max(0, 1.0 / fps - dt))
     
-    use_manual_detection = None
+    use_manual_detection = False
     print("[Inference] Complete.")
 
 ################################################################################
@@ -281,40 +335,46 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
 ################################################################################
 
 @tool(return_direct=True)
-def reach_the_object():
+def reach_the_object(object_prompt: str = "object"):
     """
-    Tool to run the inference control loop (i.e. "reach the object") using the policy.
-    If a coordinate is already selected, asks the user whether to reselect.
-    Then calls detect_target_coords, runs inference, and resets the manual detection flag.
+    Runs the inference control loop to reach the target object using AI-based detection.
+    If multiple objects are detected, you'll be asked which one to use.
     """
     global policies, robot, rest_position, clicked_coords
-    if clicked_coords is not None:
-        answer = input(f"Coordinate already selected: {clicked_coords}. Do you want to reselect? (y/n): ").strip().lower()
-        if answer == "y":
-            detect_target_coords()
-    else:
-        detect_target_coords()
+    detect_target_coords(mode="ai", object_to_detect=object_prompt)
     config = policies["reach_the_object"]
     run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
-    # Reset manual detection flag and clicked coordinates after inference
+    return "Completed reach_the_object inference (AI mode)."
 
-    return "Completed reach_the_object inference."
+@tool(return_direct=True)
+def reach_the_object_manual():
+    """
+    In manual mode, instructs you to double-click on the phone window to select the target.
+    After pressing ENTER when done, runs the inference control loop.
+    """
+    global policies, robot, rest_position, clicked_coords
+    coords = detect_target_coords(mode="manual", object_to_detect="object")
+    if coords is None:
+        return "No target selected manually."
+    config = policies["reach_the_object"]
+    run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
+    return "Completed reach_the_object inference (Manual mode)."
 
 @tool(return_direct=True)
 def go_to_home_position_tool():
     """
-    Tool to return the robot's arm to the home position.
+    Returns the robot's arm to the home position.
     """
     global robot, rest_position
     go_to_home_position(robot, rest_position)
     return "Returned to home position."
 
 @tool(return_direct=True)
-def detect_target_tool():
+def detect_target_tool(object_prompt: str = "object"):
     """
-    Tool to run target detection.
+    Runs target detection using AI and reports the detected coordinates.
     """
-    coords = detect_target_coords()
+    coords = detect_target_coords(mode="ai", object_to_detect=object_prompt)
     if coords is None:
         return "No target detected."
     else:
@@ -322,37 +382,33 @@ def detect_target_tool():
 
 @tool(return_direct=True)
 def describe_area():
-    """Describing what I can see.
     """
-    
+    Captures the current observation and uses a ChatGPT-like model to describe the area in one phrase.
+    """
     _ = load_dotenv(find_dotenv())
     api_key = os.getenv("OPENAI_API_KEY")
     llm_model = "gpt-4o-mini"
     llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
 
-    llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
-
     observation = robot.capture_observation()
-    image_keys = [key for key in observation if "image" in key]
-    for key in image_keys:
-        if "phone" in key:
-            img = cv2.imread(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
-    
-    
-    # cv2.imshow("Image", img)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    phone_image = None
+    for key in observation:
+        if "image" in key and "phone" in key:
+            img = observation[key].numpy()
+            phone_image = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            break
 
-    _, encoded_img = cv2.imencode('.png', img) 
+    if phone_image is None:
+        return "No phone image available for description."
+
+    _, encoded_img = cv2.imencode('.png', phone_image) 
     base64_img = base64.b64encode(encoded_img).decode("utf-8")    
-    
     mime_type = 'image/png'
     encoded_image_url = f"data:{mime_type};base64,{base64_img}"
 
-
     chat_prompt_template = ChatPromptTemplate.from_messages(
         messages=[
-            SystemMessage(content='Describe in one phrase what objects you see on the table. Not including robot. Start answer with "I see..."'),
+            SystemMessage(content='Describe in one phrase what objects you see on the table. Exclude the robot. Start your answer with "I see..."'),
             HumanMessagePromptTemplate.from_template(
                  [{'image_url': "{encoded_image_url}", 'type': 'image_url'}],
             )
@@ -361,18 +417,17 @@ def describe_area():
 
     chain = chat_prompt_template | llm
     res = chain.invoke({"encoded_image_url": encoded_image_url})
-
     return res.content
 
-
 ################################################################################
-# Voice Recognition Helper
+# Voice / Typing Command Helper
 ################################################################################
 
-def listen():
+def listen_voice():
     """
     Listen for a voice command using the microphone.
     """
+    import speech_recognition as sr
     r = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening for voice command...")
@@ -382,33 +437,37 @@ def listen():
         print(f"Voice Input: {text}")
         return text
     except Exception as e:
-        print("Voice recognition error: " + str(e))
+        print("Voice recognition error:", str(e))
         return None
 
+def get_command(use_typing: bool):
+    """
+    Returns the command from either keyboard (if use_typing is True) or voice.
+    """
+    if use_typing:
+        command = input("Enter your command (or response): ")
+        return command
+    else:
+        return listen_voice()
+
 ################################################################################
-# Argument Parsing Function
+# Main Function (Runtime Command Processing)
 ################################################################################
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Robot ChatGPT Agent")
+    parser = argparse.ArgumentParser(description="Autonomous Robot ChatGPT Agent (Runtime Command Mode)")
     parser.add_argument("--robot-path", type=str, default="lerobot/configs/robot/koch.yaml",
                         help="Path to the robot configuration file.")
     parser.add_argument("--typing", action="store_true",
-                        help="Use typing for commands instead of voice commands.")
+                        help="Use keyboard input instead of voice commands.")
     return parser.parse_args()
 
-################################################################################
-# Main Function
-################################################################################
-
 def main():
-    global program_ending, clicked_coords, robot, rest_position, policies
+    global program_ending, clicked_coords, robot, rest_position, policies, typing_mode
 
     args = parse_args()
-    typing = args.typing
-
+    typing_mode = args.typing
     say("Starting up...", blocking=False)
-
     print(f"Using robot configuration from: {args.robot_path}")
 
     #######################################################
@@ -424,8 +483,8 @@ def main():
     # Initialize policy configuration
     policies = {
         "reach_the_object": {
-            "chkpt": "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_reach_the_object/checkpoints/last/pretrained_model",
-            "control_time_s": 10
+            "chkpt": "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_reach_the_marker/pretrained_model",
+            "control_time_s": 45
         }
     }
 
@@ -435,6 +494,9 @@ def main():
     cam_thread = threading.Thread(target=camera_thread_func, args=(robot,))
     cam_thread.start()
     time.sleep(2.0)
+    
+    listener_angle = Listener(on_press=update_angle)
+    listener_angle.start()
 
     #######################################################
     # Create ChatGPT Agent and Tools
@@ -442,31 +504,33 @@ def main():
     _ = load_dotenv(find_dotenv())
     api_key = os.getenv("OPENAI_API_KEY")
     agent_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You're a helpful robot-arm assistant. Answer super concise."),
+        ("system", "You're a helpful robot-arm assistant. You can interpret free-form commands (e.g. 'go to this and then that and then back home' or 'reach the object manually') and execute the appropriate tools. Answer super concise."),
         ("human", "{input}"),
         ("placeholder", "{agent_scratchpad}"),
     ])
     llm_model = "gpt-4o-mini"
     llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
-    tools_list = [reach_the_object, go_to_home_position_tool, detect_target_tool, describe_area]
+    tools_list = [reach_the_object, reach_the_object_manual, go_to_home_position_tool, detect_target_tool, describe_area]
     agent = create_tool_calling_agent(llm, tools_list, agent_prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools_list, verbose=True)
 
     #######################################################
-    # Chat Loop: Listen for Commands and Call Tools
+    # Runtime Command Loop (Voice or Typing-based)
     #######################################################
+    print("Entering runtime command loop. Say or type 'exit' to quit.")
     while True:
-        if typing:
+        if typing_mode:
             command = input("Enter your command (or 'exit' to quit): ")
         else:
-            command = listen()
-            if command is None:
-                continue
-        if command.lower() == "exit":
+            command = listen_voice()
+        if command is None:
+            continue
+        if command.strip().lower() == "exit":
             break
         response = agent_executor.invoke({"input": command})
-        print("Response:", response["output"])
-        say(response["output"])
+        output = response.get("output", "")
+        print("Response:", output)
+        say(output)
     
     #######################################################
     # Cleanup

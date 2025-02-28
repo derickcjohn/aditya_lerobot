@@ -36,7 +36,7 @@ from lerobot.common.policies.act.modeling_act import ACTPolicy
 ################################################################################
 
 program_ending = False
-manual_detection = False  # If True -> double-click in "phone" window for coords
+manual_detection = True  # If True -> double-click in "phone" window for coords
 
 # In manual_detection mode, we store the user's double-click here
 clicked_coords = None  # Will hold (x, y) or None
@@ -197,6 +197,7 @@ def camera_thread_func(robot):
 
     # Named window
     cv2.namedWindow("phone", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("phone", 640, 480)
 
     if manual_detection:
         # Set mouse callback on the phone camera window
@@ -326,7 +327,7 @@ def run_inference(robot, rest_position):
     fps = 30
     device = "cuda"  # or "cpu"
 
-    ckpt_path = "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_reach_the_object/checkpoints/last/pretrained_model"
+    ckpt_path = "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_reach_the_marker/pretrained_model"
     # ckpt_path = "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_follow_marker_2/last/pretrained_model"
 
     policy = ACTPolicy.from_pretrained(ckpt_path)

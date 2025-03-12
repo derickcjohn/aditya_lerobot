@@ -266,6 +266,9 @@ def record(
     while True:
         if dataset["num_episodes"] >= num_episodes:
             break
+        
+        log_say("Starting Teleoperation", play_sounds)
+        control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
 
         episode_index = dataset["num_episodes"]
         log_say(f"Recording episode {episode_index}", play_sounds)

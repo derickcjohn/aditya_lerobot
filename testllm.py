@@ -19,6 +19,7 @@ import base64
 from dotenv import load_dotenv, find_dotenv
 import argparse
 import math
+import getpass
 
 # For generative AI bounding-box detection (if needed)
 import google.generativeai as genai
@@ -49,7 +50,7 @@ from langchain_openai import ChatOpenAI
 ################################################################################
 
 program_ending = False
-clicked_coords = None    # Will hold (x, y) or None
+target_coords = None    # Will hold (x, y) or None
 use_manual_detection = False  # Global flag for manual detection
 angle = 0
 
@@ -138,10 +139,10 @@ def on_mouse_double_click(event, x, y, flags, param):
     """
     Mouse callback used in manual mode.
     """
-    global clicked_coords, use_manual_detection
+    global target_coords, use_manual_detection
     if use_manual_detection and event == cv2.EVENT_LBUTTONDBLCLK:
-        clicked_coords = (x, y)
-        print(f"[Manual Detection] Double-click at: {clicked_coords}")
+        target_coords = (x, y)
+        print(f"[Manual Detection] Double-click at: {target_coords}")
 
 def object_detection(image: np.ndarray, object_to_detect: str) -> List[tuple]:
     """
@@ -196,7 +197,7 @@ def camera_thread_func(robot):
     Continuously reads frames from the robot's "phone" camera, updates `img_buffer`,
     and displays the frame.
     """
-    global program_ending, clicked_coords, use_manual_detection
+    global program_ending, target_coords, use_manual_detection
     cv2.namedWindow("phone", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("phone", 640, 480)
     cv2.setMouseCallback("phone", on_mouse_double_click)
@@ -205,8 +206,8 @@ def camera_thread_func(robot):
         if frame is not None:
             img_buffer["phone"] = frame.copy()
             display_frame = cv2.cvtColor(img_buffer["phone"], cv2.COLOR_RGB2BGR)
-            if clicked_coords is not None:
-                put_the_marker(display_frame, clicked_coords)
+            if target_coords is not None:
+                put_the_marker(display_frame, target_coords)
             cv2.imshow("phone", display_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             program_ending = True
@@ -214,26 +215,7 @@ def camera_thread_func(robot):
     cv2.destroyAllWindows()
     print("[Camera Thread] Exiting camera loop.")
 
-def get_command(use_typing: bool):
-    """
-    Returns a command/response from either keyboard (if use_typing is True) or voice.
-    """
-    if use_typing:
-        command = input("Enter your response: ")
-        return command
-    else:
-        import speech_recognition as sr
-        r = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("Listening for response...")
-            audio = r.listen(source)
-        try:
-            text = r.recognize_google(audio)
-            print(f"Voice Response: {text}")
-            return text
-        except Exception as e:
-            print("Voice recognition error:", str(e))
-            return None
+
 
 def detect_target_coords(mode="ai", object_to_detect="object") -> tuple:
     """
@@ -242,16 +224,19 @@ def detect_target_coords(mode="ai", object_to_detect="object") -> tuple:
     then waits for you to press ENTER (or provide an empty response) to confirm.
     In 'ai' mode, uses AI-based detection and, if multiple objects are found, asks which index to use.
     """
-    global clicked_coords, img_buffer, use_manual_detection, typing_mode
+    global target_coords, img_buffer, use_manual_detection, typing_mode
     if mode.lower() == "manual":
         use_manual_detection = True
         say("Please double-click on the phone window to mark your object. Then press ENTER when done selecting points.", blocking=True)
-        print("Manual detection: Please double-click on the phone window to mark your object.")
-        _ = get_command(typing_mode)  # Wait for confirmation (ENTER)
-        if clicked_coords is None:
+        print("Manual detection: Please double-click on the phone window to mark your object and press enter here.")
+        # The prompt is intentionally left empty so nothing is shown.
+        getpass.getpass(prompt='')
+
+        # _ = get_command(typing_mode)  # Wait for confirmation (ENTER)
+        if target_coords is None:
             print("[Manual Detection] No point was clicked.")
             return None
-        return clicked_coords
+        return target_coords
     # Default to AI detection.
     frame_phone = img_buffer["phone"]
     coords_list = []
@@ -262,7 +247,7 @@ def detect_target_coords(mode="ai", object_to_detect="object") -> tuple:
     else:
         print("[AI Detection] No phone frame in buffer!")
     if not coords_list:
-        clicked_coords = None
+        target_coords = None
         return None
     if len(coords_list) > 1:
         print("Multiple objects found:")
@@ -278,11 +263,11 @@ def detect_target_coords(mode="ai", object_to_detect="object") -> tuple:
         if chosen_index < 0 or chosen_index >= len(coords_list):
             print("Index out of range, defaulting to index 0.")
             chosen_index = 0
-        clicked_coords = coords_list[chosen_index]
-        return clicked_coords
+        target_coords = coords_list[chosen_index]
+        return target_coords
     else:
-        clicked_coords = coords_list[0]
-        return clicked_coords
+        target_coords = coords_list[0]
+        return target_coords
 
 def go_to_home_position(robot, rest_position):
     """
@@ -295,6 +280,43 @@ def go_to_home_position(robot, rest_position):
         intermediate_pos = current_pos + alpha * (rest_position - current_pos)
         robot.follower_arms['main'].write("Goal_Position", intermediate_pos)
         time.sleep(0.05)
+
+def grip_the_object():
+    global target_coords
+    print("grip the object at", target_coords)
+
+def early_stop_robot(current_angles: torch.Tensor, tolerance: float = 5,
+                     stable_duration_seconds: float = 3.0, fps: int = 30) -> bool:
+
+    # Initialize the history list on the first call.
+    if not hasattr(early_stop_robot, "history"):
+        early_stop_robot.history = []
+    
+    # Append the current angles (cloned to avoid mutation issues)
+    early_stop_robot.history.append(current_angles.clone())
+    
+    # Calculate the number of frames that correspond to the desired duration.
+    required_frames = int(stable_duration_seconds * fps)
+    
+    # If we don't yet have enough frames, return False.
+    if len(early_stop_robot.history) < required_frames:
+        return False
+    
+    # Compare the angles from the frame at time t (start of window)
+    # and the current frame (time t + stable_duration_seconds)
+    start_angles = early_stop_robot.history[-required_frames]
+    end_angles = current_angles  # Most recent frame
+    
+    # Calculate absolute difference for each joint.
+    diff = torch.abs(end_angles - start_angles)
+    
+    # If all differences are below the tolerance, we consider it stable.
+    if torch.all(diff < tolerance):
+        print("Early stopping")
+        early_stop_robot.history = []  # Clear the history for future use.
+        return True
+    else:
+        return False
 
 def run_inference(robot, rest_position, chkpt, control_time_s):
     """
@@ -313,9 +335,9 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
         observation = robot.capture_observation()
         for name in observation:
             if "image" in name:
-                if clicked_coords is not None and "phone" in name:
+                if target_coords is not None and "phone" in name:
                     img_bgr = cv2.cvtColor(observation[name].numpy(), cv2.COLOR_RGB2BGR)
-                    put_the_marker(img_bgr, clicked_coords)
+                    put_the_marker(img_bgr, target_coords)
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
                     observation[name] = torch.from_numpy(img_rgb)
                 observation[name] = observation[name].type(torch.float32) / 255
@@ -323,12 +345,28 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
             observation[name] = observation[name].unsqueeze(0).to(device)
         action = policy.select_action(observation)
         action = action.squeeze(0).to("cpu")
+        if early_stop_robot(action,fps=fps) == True:
+            break
         robot.send_action(action)
         dt = time.perf_counter() - t0
         busy_wait(max(0, 1.0 / fps - dt))
     
     use_manual_detection = False
     print("[Inference] Complete.")
+    
+def is_exit_command(command: str) -> bool:
+    """
+    Uses ChatGPT to determine if the given command is an exit instruction.
+    The prompt instructs the model to answer only 'yes' or 'no'.
+    """
+    from langchain_openai import ChatOpenAI
+    api_key = os.getenv("OPENAI_API_KEY")
+    classifier = ChatOpenAI(temperature=0, model="gpt-4o-mini", api_key=api_key)
+    prompt = f"""You are a classifier. Determine if the following command indicates that the user wants to exit the session. Answer only 'yes' or 'no'.
+Command: "{command}"
+"""
+    response = classifier.invoke(prompt)
+    return "yes" in str(response).lower()
 
 ################################################################################
 # ChatGPT Agent Tools
@@ -339,7 +377,7 @@ def reach_the_object(object_prompt: str = "object"):
     """
     Runs the inference control loop to reach the target object using AI-based detection.
     """
-    global policies, robot, rest_position, clicked_coords
+    global policies, robot, rest_position, target_coords
     detect_target_coords(mode="ai", object_to_detect=object_prompt)
     config = policies["reach_the_object"]
     run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
@@ -349,9 +387,9 @@ def reach_the_object(object_prompt: str = "object"):
 def reach_the_object_manual():
     """
     In manual mode, instructs you to double-click on the phone window to select the target.
-    After pressing ENTER when done, runs the inference control loop.
+    After pressing ENTER when done, runs the inference control loop to reach the target.
     """
-    global policies, robot, rest_position, clicked_coords
+    global policies, robot, rest_position, target_coords
     coords = detect_target_coords(mode="manual", object_to_detect="object")
     if coords is None:
         return "No target selected manually."
@@ -360,12 +398,23 @@ def reach_the_object_manual():
     return "Completed reach_the_object inference (Manual mode)."
 
 @tool(return_direct=True)
+def grip_the_object_tool():
+    """If a command such as 'grip the object', 'pick up the object', or 'pickup the object' is received, where object or mode is not specified just call grip tool
+    else, first call the 'reach_the_object' tool (or 'reach_the_object_manual' if manual mode is specified) to move toward the object, 
+    then call the 'grip_the_object_tool' to grasp it."""
+   
+    grip_the_object()
+    return "Gripped the object."
+
+
+@tool(return_direct=True)
 def go_to_home_position_tool():
     """
     Returns the robot's arm to the home position.
     """
-    global robot, rest_position
+    global robot, rest_position,target_coords
     go_to_home_position(robot, rest_position)
+    target_coords = None
     return "Returned to home position."
 
 @tool(return_direct=True)
@@ -462,7 +511,7 @@ def parse_args():
     return parser.parse_args()
 
 def main():
-    global program_ending, clicked_coords, robot, rest_position, policies, typing_mode
+    global program_ending, target_coords, robot, rest_position, policies, typing_mode
 
     args = parse_args()
     typing_mode = args.typing
@@ -483,7 +532,7 @@ def main():
     policies = {
         "reach_the_object": {
             "chkpt": "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_reach_the_marker/pretrained_model",
-            "control_time_s": 45
+            "control_time_s": 30
         }
     }
 
@@ -503,13 +552,13 @@ def main():
     _ = load_dotenv(find_dotenv())
     api_key = os.getenv("OPENAI_API_KEY")
     agent_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You're a helpful robot-arm assistant. You can interpret free-form commands (e.g. 'go to this and then that and then back home' or 'reach the object manually') and execute the appropriate tools. Answer super concise."),
-        ("human", "{input}"),
+        ("system", "You're a helpful robot-arm assistant. Answer super concise."), 
+        ("human", "{input}"), 
         ("placeholder", "{agent_scratchpad}"),
     ])
     llm_model = "gpt-4o-mini"
     llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
-    tools_list = [reach_the_object, reach_the_object_manual, go_to_home_position_tool, detect_target_tool, describe_area]
+    tools_list = [reach_the_object, reach_the_object_manual, grip_the_object_tool,go_to_home_position_tool, detect_target_tool, describe_area]
     agent = create_tool_calling_agent(llm, tools_list, agent_prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools_list, verbose=True)
 
@@ -519,12 +568,12 @@ def main():
     print("Entering runtime command loop. Say or type 'exit' to quit.")
     while True:
         if typing_mode:
-            command = input("Enter your command (or 'exit' to quit): ")
+            command = input("Enter your command (or response): ")
         else:
             command = listen_voice()
         if command is None:
             continue
-        if command.strip().lower() == "exit":
+        if is_exit_command(command):
             break
         response = agent_executor.invoke({"input": command})
         output = response.get("output", "")

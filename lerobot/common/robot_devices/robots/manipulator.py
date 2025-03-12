@@ -349,7 +349,7 @@ class ManipulatorRobot:
                     json.dump(calibration, f)
 
             return calibration
-
+        
         for name, arm in self.follower_arms.items():
             calibration = load_or_run_calibration_(name, arm, "follower")
             arm.set_calibration(calibration)

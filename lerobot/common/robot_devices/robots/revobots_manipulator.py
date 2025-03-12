@@ -96,21 +96,25 @@ class RevobotsManipulatorRobot:
         self.calibration_dir = Path(calibration_dir)
 
         self.robot_type = self.config.robot_type
-        self.leader_arms = self.config.leader_arms
-        self.follower_arms = self.config.follower_arms
+        
+        # === Extra Revobot config initialization ===
+        self.use_revobot_leader = self.config.use_revobot_leader
+        self.use_revobot_follower = self.config.use_revobot_follower
+        
+        if self.use_revobot_leader:
+            self.leader_arms = self.config.revobot_leader_arms
+        else:
+            self.leader_arms = self.config.leader_arms
+            
+        if self.use_revobot_follower:
+            self.follower_arms = self.config.revobot_follower_arms
+        else:
+            self.follower_arms = self.config.follower_arms  
+        
         self.cameras = self.config.cameras
         self.is_connected = False
         self.logs = {}
 
-        # === Extra Revobot config initialization ===
-        self.use_revobot_leader = self.config.use_revobot_leader
-        self.use_revobot_follower = self.config.use_revobot_follower
-
-        # If using Revobot for leader or follower, use the corresponding Revobot arms instead of Koch arms.
-        if self.use_revobot_leader:
-            self.leader_arms = self.config.revobot_leader_arms
-        if self.use_revobot_follower:
-            self.follower_arms = self.config.revobot_follower_arms
 
     @property
     def has_camera(self):
@@ -159,9 +163,11 @@ class RevobotsManipulatorRobot:
 
         # Disable torque on all motors before calibration
         for name in self.follower_arms:
-            self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            if self.use_revobot_follower == False:
+                self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
         for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            if self.use_revobot_leader == False:
+                self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
         self.activate_calibration()
 
@@ -175,8 +181,9 @@ class RevobotsManipulatorRobot:
 
         # Enable torque on follower arms if present
         for name in self.follower_arms:
-            print(f"Activating torque on {name} follower arm.")
-            self.follower_arms[name].write("Torque_Enable", 1)
+            if self.use_revobot_follower == False:
+                print(f"Activating torque on {name} follower arm.")
+                self.follower_arms[name].write("Torque_Enable", 1)
 
         if self.config.gripper_open_degree is not None:
             if self.robot_type not in ["koch", "koch_bimanual"]:
@@ -206,9 +213,9 @@ class RevobotsManipulatorRobot:
         
         NOTE: Revobot robots work without calibration, so if Revobot is in use, this step is skipped.
         """
-        if self.use_revobot_leader or self.use_revobot_follower:
-            print("Revobot detected; skipping calibration.")
-            return
+        # if self.use_revobot_leader or self.use_revobot_follower:
+        #     print("Revobot detected; skipping calibration.")
+        #     return
 
         def load_or_run_calibration_(name, arm, arm_type):
             arm_id = get_arm_id(name, arm_type)
@@ -233,13 +240,15 @@ class RevobotsManipulatorRobot:
                     json.dump(calibration, f)
 
             return calibration
-
-        for name, arm in self.follower_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "follower")
-            arm.set_calibration(calibration)
-        for name, arm in self.leader_arms.items():
-            calibration = load_or_run_calibration_(name, arm, "leader")
-            arm.set_calibration(calibration)
+        
+        if self.use_revobot_follower == False:
+            for name, arm in self.follower_arms.items():
+                calibration = load_or_run_calibration_(name, arm, "follower")
+                arm.set_calibration(calibration)
+        if self.use_revobot_leader == False:
+            for name, arm in self.leader_arms.items():
+                calibration = load_or_run_calibration_(name, arm, "leader")
+                arm.set_calibration(calibration)
 
     def set_koch_robot_preset(self):
         def set_operating_mode_(arm):
@@ -253,19 +262,22 @@ class RevobotsManipulatorRobot:
                 arm.write("Operating_Mode", 4, all_motors_except_gripper)
                 
             arm.write("Operating_Mode", 5, "gripper")
+        
+        if self.use_revobot_follower == False:
+            for name in self.follower_arms:
+                set_operating_mode_(self.follower_arms[name])
+                self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
+                self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
+                self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
 
-        for name in self.follower_arms:
-            set_operating_mode_(self.follower_arms[name])
-            self.follower_arms[name].write("Position_P_Gain", 1500, "elbow_flex")
-            self.follower_arms[name].write("Position_I_Gain", 0, "elbow_flex")
-            self.follower_arms[name].write("Position_D_Gain", 600, "elbow_flex")
-
-        if self.config.gripper_open_degree is not None:
-            for name in self.leader_arms:
-                set_operating_mode_(self.leader_arms[name])
-                self.leader_arms[name].write("Torque_Enable", 1, "gripper")
-                self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
-
+        if self.use_revobot_leader == False:
+            if self.config.gripper_open_degree is not None:
+                for name in self.leader_arms:
+                    set_operating_mode_(self.leader_arms[name])
+                    self.leader_arms[name].write("Torque_Enable", 1, "gripper")
+                    self.leader_arms[name].write("Goal_Position", self.config.gripper_open_degree, "gripper")
+    
+    #TODO: compatible revobot with aloha
     def set_aloha_robot_preset(self):
         def set_shadow_(arm):
             if "shoulder_shadow" in arm.motor_names:
@@ -292,18 +304,20 @@ class RevobotsManipulatorRobot:
             )
 
     def set_so100_robot_preset(self):
-        for name in self.follower_arms:
-            self.follower_arms[name].write("Mode", 0)
-            self.follower_arms[name].write("P_Coefficient", 16)
-            self.follower_arms[name].write("I_Coefficient", 0)
-            self.follower_arms[name].write("D_Coefficient", 32)
-            self.follower_arms[name].write("Lock", 0)
-            self.follower_arms[name].write("Maximum_Acceleration", 254)
-            self.follower_arms[name].write("Acceleration", 254)
+        if self.use_revobot_follower == False:
+            for name in self.follower_arms:
+                self.follower_arms[name].write("Mode", 0)
+                self.follower_arms[name].write("P_Coefficient", 16)
+                self.follower_arms[name].write("I_Coefficient", 0)
+                self.follower_arms[name].write("D_Coefficient", 32)
+                self.follower_arms[name].write("Lock", 0)
+                self.follower_arms[name].write("Maximum_Acceleration", 254)
+                self.follower_arms[name].write("Acceleration", 254)
 
     def teleop_step(
         self, record_data=False
     ) -> None | tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        # print("entering teleop")
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
@@ -328,9 +342,10 @@ class RevobotsManipulatorRobot:
                         present_pos = self.follower_arms[name].read("Present_Position")
                         present_pos = torch.from_numpy(present_pos)
                         goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+                        # print(goal_pos)
                     follower_goal_pos[name] = goal_pos
                     goal_pos = goal_pos.numpy().astype(np.int32)
-                    self.follower_arms[name].write("Goal_Position", goal_pos)
+                    self.follower_arms[name].write("Goal_Position", values=goal_pos)
                     self.logs[f"write_follower_{name}_goal_pos_dt_s"] = time.perf_counter() - before_fwrite_t
                 else:
                     print(f"Skipping follower arm '{name}' since no corresponding leader data is available.")
@@ -343,7 +358,7 @@ class RevobotsManipulatorRobot:
             for name in self.follower_arms:
                 before_fread_t = time.perf_counter()
                 follower_pos[name] = self.follower_arms[name].read("Present_Position")
-                follower_pos[name] = torch.from_numpy(follower_pos[name])
+                follower_pos[name] = torch.from_numpy(np.array(follower_pos[name]))
                 self.logs[f"read_follower_{name}_pos_dt_s"] = time.perf_counter() - before_fread_t
 
         state = torch.cat([follower_pos[name] for name in self.follower_arms if name in follower_pos])
@@ -430,9 +445,11 @@ class RevobotsManipulatorRobot:
             )
         from lerobot.common.robot_devices.motors.dynamixel import TorqueMode
         for name in self.follower_arms:
-            self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            if self.use_revobot_follower == False:
+                self.follower_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
         for name in self.leader_arms:
-            self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
+            if self.use_revobot_leader == False:
+                self.leader_arms[name].write("Torque_Enable", TorqueMode.DISABLED.value)
 
         for name in self.follower_arms:
             self.follower_arms[name].disconnect()

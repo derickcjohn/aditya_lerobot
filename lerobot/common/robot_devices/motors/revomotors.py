@@ -13,7 +13,7 @@ from typing import List, Optional, Tuple
 from collections import namedtuple
 import numpy as np
 
-
+write_call_counter = 0
 RobotData = namedtuple("RobotData", [
     "position",
     "delta",
@@ -36,12 +36,17 @@ Joint67Status = namedtuple("Joint67Status", [
 
 
 class RevobotRobotBus:
+    RD_SIZE = 40  # bytes per RobotData block (10 ints * 4 bytes)
+    # Precompile struct format for 10 integers
+    RD_STRUCT = struct.Struct('10i')
+    
     def __init__(self, socket_ip: str, socket_port: int, motors: dict[str, Tuple[int, str]]):
         self.socket_ip = socket_ip
         self.socket_port = socket_port
         self.motors = motors
         self.sock = None
         self.calibration = None
+        # self.skip_frames=skip_frame
 
         # Internal data storage for robot data.
         self.robotDataList: List[RobotData] = [
@@ -88,6 +93,7 @@ class RevobotRobotBus:
         try:
             self.sock.connect((self.socket_ip, self.socket_port))
             print(f"Connected to Revobot at {self.socket_ip}:{self.socket_port}. Socket fd: {self.sock.fileno()}")
+            self.write_init()
         except Exception as e:
             print("Error: connection with the server failed", e)
             self.sock = None
@@ -114,19 +120,17 @@ class RevobotRobotBus:
     
 
     def parse_partial_robot_data_and_ignore_first(self, raw_data: bytes):
-        RD_SIZE = 40  # bytes per RobotData block (10 ints * 4 bytes)
         total_len = len(raw_data)
-        # print(f"Received {total_len} bytes")
-        if total_len < RD_SIZE:
+        if total_len < self.RD_SIZE:
             print("Not enough bytes for a single RobotData block!")
             return self.robotDataList
-    
-        num_integers = total_len // 4
-        integer_list = list(struct.unpack(f'{num_integers}i', raw_data))
-        num_blocks = min(len(integer_list) // 10, 8)  # process up to 8 blocks
-    
+
+        num_blocks = min(total_len // self.RD_SIZE, 8)  # process up to 8 blocks
+
         for i in range(num_blocks):
-            block = integer_list[i * 10:(i + 1) * 10]
+            start = i * self.RD_SIZE
+            end = start + self.RD_SIZE
+            block = self.RD_STRUCT.unpack(raw_data[start:end])
             self.robotDataList[i] = RobotData(*block)
             
         return self.robotDataList
@@ -150,7 +154,7 @@ class RevobotRobotBus:
     
             try:
                 bytesWritten = self.sock.send(command.encode('utf-8'))
-                print("Sending command:", command)
+                # print("Sending command:", command)
             except Exception as e:
                 print("send_command error:", e)
                 self.reconnect()  # Try reconnecting instead of disconnecting
@@ -221,34 +225,64 @@ class RevobotRobotBus:
         positions.append(float(self.joint67Status.j7Position)/120)
         if len(positions) == 7:
             positions.pop(4)
+        
         return positions
+    
+    def revobot_robot_offset(self, index: int, value: float) -> int:
+        """
+        Compute the offset for a given motor index and value.
+        Different joints use different scaling and offset adjustments.
+        """
+        if index == 5:  # 6th position (0-based index)
+            return int((-31.5 - int(value)) * 88.8889)
+        elif index == 6:  # 7th position (0-based index)
+            return int(value * 740)
+        elif index == 1:
+            return int((90 - int(value)) * 3600)
+        elif index == 3:
+            return int((int(value) - 90) * 3600)
+        else:
+            return int(value * 3600)
 
     def write(self, data_name:str, values=[], motor_names=None):
+        global write_call_counter
+        write_call_counter += 1
         # print(np.array(values).tolist())
+        # print(values)
         values_list = np.array(values).tolist()
         if len(values_list) < 7:
             values_list.insert(4, 0)
         
-        
-        command = "xxx xxx xxx xxx a"
+        command_parts = ["xxx xxx xxx xxx a"]
         for i, value in enumerate(values_list):
-            if i == 5:  # 6th position (0-based index)
-                command += " " + str(int((-31.5-int(value)) * 88.8889))
-            elif i == 6:  # 7th position (0-based index)
-                command += " " + str(int(value * 740))
-            elif i == 1:
-                command += " " + str(int((90-int(value)) * 3600))
-            elif i == 3:
-                command += " " + str(int((int(value)-90) * 3600))
-            else:
-                command += " " + str(int(value * 3600))
-                
-        command += ";"
+            computed = self.revobot_robot_offset(i, value)
+            command_parts.append(str(computed))
+        command = " ".join(command_parts) + ";"
+        
         # print(command)
-        self.send_command(command)
+        if  write_call_counter == 15:
+            self.send_command(command)
+            write_call_counter = 0
+        else:
+            self.read()
         # time.sleep(0.25)
-
-
+        
+    def write_init(self):
+        """ Add all the initialisation parameters during the socket connection
+            these parameters only execute once for every socket connection."""
+            
+        init_config_lst = [
+                "S AngularSpeedStartAndEnd 60000", 
+                "S AngularSpeed 80000",
+                "S AngularAcceleration 104000"
+               ]
+        
+        for i in init_config_lst:
+            command = f"xxx xxx xxx xxx {i};"
+            self.send_command(command)
+            
+        # print("initialisation done")
+       
     def __del__(self):
         # print("RevobotRobotBus.__del__ called")
         self.disconnect()

@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Mar 26 16:46:39 2025
+
+@author: aadi
+"""
+
 """
 Utilities to control a robot.
 
@@ -128,6 +135,96 @@ from lerobot.common.robot_devices.robots.factory import make_robot
 from lerobot.common.robot_devices.robots.utils import Robot
 from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
 from lerobot.common.utils.utils import init_hydra_config, init_logging, log_say, none_or_int
+from pynput.keyboard import Key, Listener
+import numpy as np
+import cv2
+import math
+import threading
+
+################################################################################
+# Utility Functions
+################################################################################
+angle= 0
+
+def update_angle(key):
+    global angle
+
+    if key == Key.up:
+        angle -= 2
+    elif key == Key.down:
+        angle += 2
+listener_angle = Listener(on_press=update_angle)
+listener_angle.start()
+        
+def put_the_marker(image: np.ndarray, coords: tuple, radius=10,
+                   border_color=(0, 0, 255), cross_color=(0, 0, 255),
+                   bg_color=(255, 255, 255)):
+    """
+    Draw a marker on the given image at the specified `coords`.
+    """
+    if coords is None:
+        return image
+
+    global angle
+    x, y = coords
+    center = (x,y)
+            
+    cv2.circle(image, center, radius, bg_color, -1)
+    cv2.circle(image, center, radius, border_color, 2)
+    cv2.line(image, center, (x-int(math.sin(math.radians(angle))*radius), y+int(math.cos(math.radians(angle))*radius)), cross_color, 2)
+    cv2.line(image, center, (x-int(math.cos(math.radians(angle))*radius), y-int(math.sin(math.radians(angle))*radius)), cross_color, 2)
+    cv2.line(image, center, (x+int(math.cos(math.radians(angle))*radius), y+int(math.sin(math.radians(angle))*radius)), cross_color, 2)
+    cv2.line(image, center, (x+int(math.sin(math.radians(angle))*radius), y-int(math.cos(math.radians(angle))*radius)), cross_color, 2)
+    cv2.arrowedLine(image, (x+int(math.cos(math.radians(angle))*radius), y+int(math.sin(math.radians(angle))*radius)), (x+int(math.cos(math.radians(angle))*25),y+int(math.sin(math.radians(angle))*25)), cross_color, 4, tipLength=0.75)
+    return image
+
+def on_mouse_double_click(event, x, y, flags, param):
+    """
+    Mouse callback that captures the (x, y) on double-click.
+    Only updates clicked_coords if manual detection is active.
+    """
+    global clicked_coords, use_manual_detection
+    if use_manual_detection and event == cv2.EVENT_LBUTTONDBLCLK:
+        clicked_coords = (x, y)
+        print(f"[Manual Detection] Double-click at: {clicked_coords}")
+
+def detect_target_coords(robot,events):
+    """
+    Starts the camera feed, allows manual detection via double-click,
+    and returns the selected coordinate after ENTER is pressed.
+    """
+    cv2.destroyAllWindows()
+    global clicked_coords, use_manual_detection,angle
+    clicked_coords = None
+    use_manual_detection = True  # Ensure manual detection is active
+    
+    if events is None:
+        events = {"exit_early": False}
+
+    cv2.namedWindow("phone", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("phone", 640, 480)
+    cv2.setMouseCallback("phone", on_mouse_double_click)
+
+    print("[Detection] Double-click to select a point. Press ENTER to confirm selection.")
+
+    while True:
+        frame = robot.cameras["phone"].async_read()
+        if frame is not None:
+            img_buffer["phone"] = frame.copy()
+            display_frame = cv2.cvtColor(img_buffer["phone"], cv2.COLOR_RGB2BGR)
+            if clicked_coords is not None:
+                put_the_marker(display_frame, clicked_coords)
+            cv2.imshow("phone", display_frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if events["exit_early"]:
+            events["exit_early"] = False
+            print(f"[Detection] ENTER pressed. Final selected point: {clicked_coords}")
+            break
+
+    cv2.destroyAllWindows()
+    return clicked_coords
+
 
 ########################################################################################
 # Control modes
@@ -191,7 +288,7 @@ def teleoperate(
         teleoperate=True,
         display_cameras=display_cameras,
     )
-
+    
 
 @safe_disconnect
 def record(
@@ -267,7 +364,8 @@ def record(
         if dataset["num_episodes"] >= num_episodes:
             break
         
-        log_say("Starting Teleoperation", play_sounds)
+        print("teleoperate to desired position")
+        log_say("teleoperate to desired position", play_sounds)
         control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
 
         episode_index = dataset["num_episodes"]
@@ -291,6 +389,145 @@ def record(
         if not events["stop_recording"] and (
             (episode_index < num_episodes - 1) or events["rerecord_episode"]
         ):
+            print("teleoperate to home position")
+            log_say("teleoperate to home position", play_sounds)
+            control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
+            
+            log_say("Reset the environment", play_sounds)
+            reset_environment(robot, events, reset_time_s)
+
+        if events["rerecord_episode"]:
+            log_say("Re-record episode", play_sounds)
+            events["rerecord_episode"] = False
+            events["exit_early"] = False
+            delete_current_episode(dataset)
+            continue
+
+        # Increment by one dataset["current_episode_index"]
+        save_current_episode(dataset)
+
+        if events["stop_recording"]:
+            break
+
+    log_say("Stop recording", play_sounds, blocking=True)
+    stop_recording(robot, listener, display_cameras)
+
+    lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
+
+    log_say("Exiting", play_sounds)
+    return lerobot_dataset
+
+
+@safe_disconnect
+def record_with_marker(
+    robot: Robot,
+    root: str,
+    repo_id: str,
+    pretrained_policy_name_or_path: str | None = None,
+    policy_overrides: List[str] | None = None,
+    fps: int | None = None,
+    warmup_time_s=2,
+    episode_time_s=10,
+    reset_time_s=5,
+    num_episodes=50,
+    video=True,
+    run_compute_stats=True,
+    push_to_hub=True,
+    tags=None,
+    num_image_writer_processes=0,
+    num_image_writer_threads_per_camera=4,
+    force_override=False,
+    display_cameras=True,
+    play_sounds=True,
+):
+    # TODO(rcadene): Add option to record logs
+    listener = None
+    events = None
+    policy = None
+    device = None
+    use_amp = None
+
+    # Load pretrained policy
+    if pretrained_policy_name_or_path is not None:
+        policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
+
+        if fps is None:
+            fps = policy_fps
+            logging.warning(f"No fps provided, so using the fps from policy config ({policy_fps}).")
+        elif fps != policy_fps:
+            logging.warning(
+                f"There is a mismatch between the provided fps ({fps}) and the one from policy config ({policy_fps})."
+            )
+
+    # Create empty dataset or load existing saved episodes
+    sanity_check_dataset_name(repo_id, policy)
+    dataset = init_dataset(
+        repo_id,
+        root,
+        force_override,
+        fps,
+        video,
+        write_images=robot.has_camera,
+        num_image_writer_processes=num_image_writer_processes,
+        num_image_writer_threads=num_image_writer_threads_per_camera * robot.num_cameras,
+    )
+
+    if not robot.is_connected:
+        robot.connect()
+
+    listener, events = init_keyboard_listener()
+
+    # Execute a few seconds without recording to:
+    # 1. teleoperate the robot to move it in starting position if no policy provided,
+    # 2. give times to the robot devices to connect and start synchronizing,
+    # 3. place the cameras windows on screen
+    enable_teleoperation = policy is None
+    log_say("Warmup record", play_sounds)
+    warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
+
+    if has_method(robot, "teleop_safety_stop"):
+        robot.teleop_safety_stop()
+
+    while True:
+        if dataset["num_episodes"] >= num_episodes:
+            break
+        
+        print("put marker and use top and down button for angle")
+        log_say("put marker", play_sounds)
+        detect_target_coords(robot,events)
+        
+        print("teleoperate to desired position")
+        log_say("teleoperate to desired position", play_sounds)
+        control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
+        
+        
+        episode_index = dataset["num_episodes"]
+        log_say(f"Recording episode {episode_index}", play_sounds)
+        record_episode(
+            dataset=dataset,
+            robot=robot,
+            events=events,
+            episode_time_s=episode_time_s,
+            display_cameras=display_cameras,
+            policy=policy,
+            device=device,
+            use_amp=use_amp,
+            fps=fps,
+            clicked_coords=clicked_coords,
+            angle=angle,
+        )
+
+        # Execute a few seconds without recording to give time to manually reset the environment
+        # Current code logic doesn't allow to teleoperate during this time.
+        # TODO(rcadene): add an option to enable teleoperation during reset
+        # Skip reset for the last episode to be recorded
+        if not events["stop_recording"] and (
+            (episode_index < num_episodes - 1) or events["rerecord_episode"]
+        ):
+            print("teleoperate to home position")
+            log_say("teleoperate to home position", play_sounds)
+            control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
+            
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s)
 
@@ -499,6 +736,103 @@ if __name__ == "__main__":
         help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
     )
     parser_replay.add_argument("--episode", type=int, default=0, help="Index of the episode to replay.")
+    
+    parser_record_with_marker = subparsers.add_parser("record_with_marker", parents=[base_parser])
+    parser_record_with_marker.add_argument(
+        "--fps", type=none_or_int, default=None, help="Frames per second (set to None to disable)"
+    )
+    parser_record_with_marker.add_argument(
+        "--root",
+        type=Path,
+        default="data",
+        help="Root directory where the dataset will be stored locally at '{root}/{repo_id}' (e.g. 'data/hf_username/dataset_name').",
+    )
+    parser_record_with_marker.add_argument(
+        "--repo-id",
+        type=str,
+        default="lerobot/test",
+        help="Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).",
+    )
+    parser_record_with_marker.add_argument(
+        "--warmup-time-s",
+        type=int,
+        default=10,
+        help="Number of seconds before starting data collection. It allows the robot devices to warmup and synchronize.",
+    )
+    parser_record_with_marker.add_argument(
+        "--episode-time-s",
+        type=int,
+        default=60,
+        help="Number of seconds for data recording for each episode.",
+    )
+    parser_record_with_marker.add_argument(
+        "--reset-time-s",
+        type=int,
+        default=60,
+        help="Number of seconds for resetting the environment after each episode.",
+    )
+    parser_record_with_marker.add_argument("--num-episodes", type=int, default=50, help="Number of episodes to record_with_marker.")
+    parser_record_with_marker.add_argument(
+        "--run-compute-stats",
+        type=int,
+        default=1,
+        help="By default, run the computation of the data statistics at the end of data collection. Compute intensive and not required to just replay an episode.",
+    )
+    parser_record_with_marker.add_argument(
+        "--push-to-hub",
+        type=int,
+        default=1,
+        help="Upload dataset to Hugging Face hub.",
+    )
+    parser_record_with_marker.add_argument(
+        "--tags",
+        type=str,
+        nargs="*",
+        help="Add tags to your dataset on the hub.",
+    )
+    parser_record_with_marker.add_argument(
+        "--num-image-writer-processes",
+        type=int,
+        default=0,
+        help=(
+            "Number of subprocesses handling the saving of frames as PNGs. Set to 0 to use threads only; "
+            "set to ≥1 to use subprocesses, each using threads to write images. The best number of processes "
+            "and threads depends on your system. We recommend 4 threads per camera with 0 processes. "
+            "If fps is unstable, adjust the thread count. If still unstable, try using 1 or more subprocesses."
+        ),
+    )
+    parser_record_with_marker.add_argument(
+        "--num-image-writer-threads-per-camera",
+        type=int,
+        default=4,
+        help=(
+            "Number of threads writing the frames as png images on disk, per camera. "
+            "Too many threads might cause unstable teleoperation fps due to main thread being blocked. "
+            "Not enough threads might cause low camera fps."
+        ),
+    )
+    parser_record_with_marker.add_argument(
+        "--force-override",
+        type=int,
+        default=0,
+        help="By default, data recording is resumed. When set to 1, delete the local directory and start data recording from scratch.",
+    )
+    parser_record_with_marker.add_argument(
+        "-p",
+        "--pretrained-policy-name-or-path",
+        type=str,
+        help=(
+            "Either the repo ID of a model hosted on the Hub or a path to a directory containing weights "
+            "saved using `Policy.save_pretrained`."
+        ),
+    )
+    parser_record_with_marker.add_argument(
+        "--policy-overrides",
+        type=str,
+        nargs="*",
+        help="Any key=value arguments to override config values (use dots for.nested=overrides)",
+    )
+
 
     args = parser.parse_args()
 
@@ -514,6 +848,19 @@ if __name__ == "__main__":
 
     robot_cfg = init_hydra_config(robot_path, robot_overrides)
     robot = make_robot(robot_cfg)
+    
+    ################################################################################
+    # Global variables
+    ################################################################################
+
+    program_ending = False
+    clicked_coords = None    # Will hold (x, y) or None
+    use_manual_detection = True  # Global flag: True if user chooses manual detection
+    angle = 0
+
+    # Store latest frames for cameras
+    img_buffer = {"phone": None, "laptop": None}
+    
 
     if control_mode == "calibrate":
         calibrate(robot, **kwargs)
@@ -523,9 +870,13 @@ if __name__ == "__main__":
 
     elif control_mode == "record":
         record(robot, **kwargs)
+        
 
     elif control_mode == "replay":
         replay(robot, **kwargs)
+    
+    elif control_mode == "record_with_marker":
+        record_with_marker(robot, **kwargs)
 
     if robot.is_connected:
         # Disconnect manually to avoid a "Core dump" during process

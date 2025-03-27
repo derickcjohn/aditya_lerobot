@@ -6,6 +6,9 @@
 # If false, we use normal Dynamixel arms for Koch.
 use_revobot_leader: False
 use_revobot_follower: True
+# skip_frame: 15
+# start_end_speed: 0
+# angular_speed: 0
 
 _target_: lerobot.common.robot_devices.robots.revobots_manipulator.RevobotsManipulatorRobot
 
@@ -55,6 +58,7 @@ cameras:
     fps: 30
     width: 640
     height: 480
+  
   
 
 # Socket config for Revobot if we want to use it. 

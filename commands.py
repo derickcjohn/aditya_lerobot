@@ -27,7 +27,7 @@ python lerobot/scripts/control_robot.py record \
  
  
  python lerobot/scripts/control_robot.py record \
-  --robot-path lerobot/configs/robot/koch.yaml \
+  --robot-path lerobot/configs/robot/revobots.yaml \
   --fps 30 \
   --root data \
   --repo-id ${HF_USER}/koch_test \
@@ -51,4 +51,5 @@ python lerobot/scripts/control_robot.py record \
   python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
 
+python lerobot/scripts/control_robot.py replay     --fps 30     --root data     --repo-id koch_big_robot     --episode 1 --robot-path lerobot/configs/robot/revobots.yaml
 """

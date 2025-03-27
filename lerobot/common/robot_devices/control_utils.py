@@ -15,6 +15,9 @@ import torch
 import tqdm
 from termcolor import colored
 
+import numpy as np
+import math
+
 from lerobot.common.datasets.populate_dataset import add_frame, safe_stop_image_writer
 from lerobot.common.policies.factory import make_policy
 from lerobot.common.robot_devices.robots.utils import Robot
@@ -24,47 +27,48 @@ from lerobot.scripts.eval import get_pretrained_policy_path
 
 
 def log_control_info(robot: Robot, dt_s, episode_index=None, frame_index=None, fps=None):
-    log_items = []
-    if episode_index is not None:
-        log_items.append(f"ep:{episode_index}")
-    if frame_index is not None:
-        log_items.append(f"frame:{frame_index}")
+    # log_items = []
+    # if episode_index is not None:
+    #     log_items.append(f"ep:{episode_index}")
+    # if frame_index is not None:
+    #     log_items.append(f"frame:{frame_index}")
 
-    def log_dt(shortname, dt_val_s):
-        nonlocal log_items, fps
-        info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
-        if fps is not None:
-            actual_fps = 1 / dt_val_s
-            if actual_fps < fps - 1:
-                info_str = colored(info_str, "yellow")
-        log_items.append(info_str)
+    # def log_dt(shortname, dt_val_s):
+    #     nonlocal log_items, fps
+    #     info_str = f"{shortname}:{dt_val_s * 1000:5.2f} ({1/ dt_val_s:3.1f}hz)"
+    #     if fps is not None:
+    #         actual_fps = 1 / dt_val_s
+    #         if actual_fps < fps - 1:
+    #             info_str = colored(info_str, "yellow")
+    #     log_items.append(info_str)
 
-    # total step time displayed in milliseconds and its frequency
-    log_dt("dt", dt_s)
+    # # total step time displayed in milliseconds and its frequency
+    # log_dt("dt", dt_s)
 
-    # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
-    if not robot.robot_type.startswith("stretch"):
-        for name in robot.leader_arms:
-            key = f"read_leader_{name}_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtRlead", robot.logs[key])
+    # # TODO(aliberts): move robot-specific logs logic in robot.print_logs()
+    # if not robot.robot_type.startswith("stretch"):
+    #     for name in robot.leader_arms:
+    #         key = f"read_leader_{name}_pos_dt_s"
+    #         if key in robot.logs:
+    #             log_dt("dtRlead", robot.logs[key])
 
-        for name in robot.follower_arms:
-            key = f"write_follower_{name}_goal_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtWfoll", robot.logs[key])
+    #     for name in robot.follower_arms:
+    #         key = f"write_follower_{name}_goal_pos_dt_s"
+    #         if key in robot.logs:
+    #             log_dt("dtWfoll", robot.logs[key])
 
-            key = f"read_follower_{name}_pos_dt_s"
-            if key in robot.logs:
-                log_dt("dtRfoll", robot.logs[key])
+    #         key = f"read_follower_{name}_pos_dt_s"
+    #         if key in robot.logs:
+    #             log_dt("dtRfoll", robot.logs[key])
 
-        for name in robot.cameras:
-            key = f"read_camera_{name}_dt_s"
-            if key in robot.logs:
-                log_dt(f"dtR{name}", robot.logs[key])
+    #     for name in robot.cameras:
+    #         key = f"read_camera_{name}_dt_s"
+    #         if key in robot.logs:
+    #             log_dt(f"dtR{name}", robot.logs[key])
 
-    info_str = " ".join(log_items)
-    logging.info(info_str)
+    # info_str = " ".join(log_items)
+    # logging.info(info_str)
+    pass
 
 
 @cache
@@ -206,6 +210,8 @@ def record_episode(
     device,
     use_amp,
     fps,
+    clicked_coords=None,
+    angle=None,
 ):
     control_loop(
         robot=robot,
@@ -218,8 +224,30 @@ def record_episode(
         use_amp=use_amp,
         fps=fps,
         teleoperate=policy is None,
+        clicked_coords=clicked_coords,
+        angle=angle
     )
 
+def put_the_marker(image: np.ndarray, coords: tuple, radius=10,
+                   border_color=(0, 0, 255), cross_color=(0, 0, 255),
+                   bg_color=(255, 255, 255),angle=0):
+    """
+    Draw a marker on the given image at the specified `coords`.
+    """
+    if coords is None:
+        return image
+
+    x, y = coords
+    center = (x,y)
+            
+    cv2.circle(image, center, radius, bg_color, -1)
+    cv2.circle(image, center, radius, border_color, 2)
+    cv2.line(image, center, (x-int(math.sin(math.radians(angle))*radius), y+int(math.cos(math.radians(angle))*radius)), cross_color, 2)
+    cv2.line(image, center, (x-int(math.cos(math.radians(angle))*radius), y-int(math.sin(math.radians(angle))*radius)), cross_color, 2)
+    cv2.line(image, center, (x+int(math.cos(math.radians(angle))*radius), y+int(math.sin(math.radians(angle))*radius)), cross_color, 2)
+    cv2.line(image, center, (x+int(math.sin(math.radians(angle))*radius), y-int(math.cos(math.radians(angle))*radius)), cross_color, 2)
+    cv2.arrowedLine(image, (x+int(math.cos(math.radians(angle))*radius), y+int(math.sin(math.radians(angle))*radius)), (x+int(math.cos(math.radians(angle))*25),y+int(math.sin(math.radians(angle))*25)), cross_color, 4, tipLength=0.75)
+    return image
 
 @safe_stop_image_writer
 def control_loop(
@@ -233,6 +261,8 @@ def control_loop(
     device=None,
     use_amp=None,
     fps=None,
+    clicked_coords=None,
+    angle=None
 ):
     # TODO(rcadene): Add option to record logs
     if not robot.is_connected:
@@ -259,6 +289,14 @@ def control_loop(
             observation, action = robot.teleop_step(record_data=True)
         else:
             observation = robot.capture_observation()
+            
+        for name in observation:
+            if "image" in name:
+                if clicked_coords is not None and "phone" in name:
+                    img_bgr = cv2.cvtColor(observation[name].numpy(), cv2.COLOR_RGB2BGR)
+                    put_the_marker(img_bgr, clicked_coords)
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                    observation[name] = torch.from_numpy(img_rgb)
 
             if policy is not None:
                 pred_action = predict_action(observation, policy, device, use_amp)
@@ -273,6 +311,11 @@ def control_loop(
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
+                if clicked_coords is not None and "phone" in key:
+                    img_bgr = cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR)
+                    put_the_marker(img_bgr, coords=clicked_coords,angle=angle)
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                    observation[key] = torch.from_numpy(img_rgb)
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
 
@@ -281,7 +324,7 @@ def control_loop(
             busy_wait(1 / fps - dt_s)
 
         dt_s = time.perf_counter() - start_loop_t
-        # log_control_info(robot, dt_s, fps=fps)
+        log_control_info(robot, dt_s, fps=fps)
 
         timestamp = time.perf_counter() - start_episode_t
         if events["exit_early"]:

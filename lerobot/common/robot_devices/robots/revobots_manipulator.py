@@ -20,6 +20,8 @@ from typing import Sequence
 
 import numpy as np
 import torch
+import cv2
+import math
 
 from lerobot.common.robot_devices.cameras.utils import Camera
 from lerobot.common.robot_devices.motors.utils import MotorsBus
@@ -379,8 +381,29 @@ class RevobotsManipulatorRobot:
             obs_dict[f"observation.images.{name}"] = images[name]
 
         return obs_dict, action_dict
+    
+    def put_the_marker(image: np.ndarray, coords: tuple, radius=10,
+                       border_color=(0, 0, 255), cross_color=(0, 0, 255),
+                       bg_color=(255, 255, 255),angle=0):
+        """
+        Draw a marker on the given image at the specified `coords`.
+        """
+        if coords is None:
+            return image
 
-    def capture_observation(self):
+        x, y = coords
+        center = (x,y)
+                
+        cv2.circle(image, center, radius, bg_color, -1)
+        cv2.circle(image, center, radius, border_color, 2)
+        cv2.line(image, center, (x-int(math.sin(math.radians(angle))*radius), y+int(math.cos(math.radians(angle))*radius)), cross_color, 2)
+        cv2.line(image, center, (x-int(math.cos(math.radians(angle))*radius), y-int(math.sin(math.radians(angle))*radius)), cross_color, 2)
+        cv2.line(image, center, (x+int(math.cos(math.radians(angle))*radius), y+int(math.sin(math.radians(angle))*radius)), cross_color, 2)
+        cv2.line(image, center, (x+int(math.sin(math.radians(angle))*radius), y-int(math.cos(math.radians(angle))*radius)), cross_color, 2)
+        cv2.arrowedLine(image, (x+int(math.cos(math.radians(angle))*radius), y+int(math.sin(math.radians(angle))*radius)), (x+int(math.cos(math.radians(angle))*25),y+int(math.sin(math.radians(angle))*25)), cross_color, 4, tipLength=0.75)
+        return image
+
+    def capture_observation(self,clicked_coords=None,angle=0):
         if not self.is_connected:
             raise RobotDeviceNotConnectedError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
@@ -399,6 +422,13 @@ class RevobotsManipulatorRobot:
         for name in self.cameras:
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
+            
+            print(clicked_coords,angle,name)
+            if clicked_coords is not None and "phone" in name:
+                img_bgr = cv2.cvtColor(images[name].numpy(), cv2.COLOR_RGB2BGR) 
+                self.put_the_marker(images=img_bgr, clicked_coords=clicked_coords, angle=angle)
+                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                images[name] = img_rgb
             images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t

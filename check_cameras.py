@@ -13,7 +13,7 @@ import os
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
 
-def list_connected_cameras(max_cameras=20):
+def list_connected_cameras(max_cameras=50):
     """
     Detects available camera indexes up to max_cameras.
     Returns a list of indexes of working cameras.

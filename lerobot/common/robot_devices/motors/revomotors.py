@@ -226,6 +226,9 @@ class RevobotRobotBus:
         if len(positions) == 7:
             positions.pop(4)
         
+        positions = np.array(positions)
+        positions = positions.astype(np.int32)
+        
         return positions
     
     def revobot_robot_offset(self, index: int, value: float) -> int:
@@ -253,14 +256,14 @@ class RevobotRobotBus:
         if len(values_list) < 7:
             values_list.insert(4, 0)
         
-        command_parts = ["xxx xxx xxx xxx a"]
+        command_parts = ["xxx xxx xxx xxx P"]
         for i, value in enumerate(values_list):
             computed = self.revobot_robot_offset(i, value)
             command_parts.append(str(computed))
         command = " ".join(command_parts) + ";"
         
         # print(command)
-        if  write_call_counter == 15:
+        if  write_call_counter == 1:
             self.send_command(command)
             write_call_counter = 0
         else:
@@ -272,9 +275,14 @@ class RevobotRobotBus:
             these parameters only execute once for every socket connection."""
             
         init_config_lst = [
-                "S AngularSpeedStartAndEnd 60000", 
-                "S AngularSpeed 80000",
-                "S AngularAcceleration 104000"
+                "S AngularSpeedStartAndEnd 100000", 
+                "S AngularSpeed 82500",
+                "S AngularAcceleration 65000",
+                "S J1_PID_P 0.16",
+                "S J2_PID_P 0.30",
+                "S J3_PID_P 0.45",
+                "S J4_PID_P 0.5",
+                "S J5_PID_P 0.5"
                ]
         
         for i in init_config_lst:

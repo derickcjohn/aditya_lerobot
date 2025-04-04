@@ -47,19 +47,18 @@ follower_arms:
 
 cameras:
   laptop:
-    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
-    serial_number: 816612060176
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 12
     fps: 30
     width: 640
     height: 480
   phone:
-    _target_: lerobot.common.robot_devices.cameras.intelrealsense.IntelRealSenseCamera
-    serial_number: 828612060404
+    _target_: lerobot.common.robot_devices.cameras.opencv.OpenCVCamera
+    camera_index: 6
     fps: 30
     width: 640
     height: 480
-  
-  
+
 
 # Socket config for Revobot if we want to use it. 
 # We just keep it here so we can set IP/port for either leader or follower.
@@ -82,6 +81,7 @@ revobot_follower_arms:
   main:
     _target_: lerobot.common.robot_devices.motors.revomotors.RevobotRobotBus
     socket_ip: "192.168.0.142"
+    #socket_ip: "97.188.81.36"
     socket_port: 50000
     motors:
       shoulder_pan: [1, "a"]

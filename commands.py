@@ -30,11 +30,11 @@ python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/revobots.yaml \
   --fps 30 \
   --root data \
-  --repo-id ${HF_USER}/koch_test \
+  --repo-id koch_big_robot \
   --tags tutorial \
-  --warmup-time-s 10 \
-  --episode-time-s 30 \
-  --reset-time-s 30 \
+  --warmup-time-s 300 \
+  --episode-time-s 300 \
+  --reset-time-s 300 \
   --num-episodes 2 \
   --push-to-hub 0
   
@@ -47,6 +47,9 @@ python lerobot/scripts/control_robot.py record \
   hydra.job.name=act_koch_test \
   device=cuda
   
+  cd aditya/aditya_lerobot
+  python lerobot/scripts/control_robot.py teleoperate \
+  --robot-path lerobot/configs/robot/revobots.yaml
   
   python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml

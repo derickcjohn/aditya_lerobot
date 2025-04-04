@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed Feb 13 15:04:02 2025
+Created on Fri Apr 4 19:25:14 2025
 
 @author: aadi
 """
@@ -12,38 +11,42 @@ import time
 import torch
 import platform
 import threading
-from PIL import Image
-from typing import List
-import numpy as np
-import base64
-from dotenv import load_dotenv, find_dotenv
-import argparse
 import math
+import base64
+import numpy as np
+import argparse
 import getpass
-
-# For generative AI bounding-box detection (if needed)
-import google.generativeai as genai
-
 from pynput.keyboard import Key, Listener
 
-# Robot-specific imports
-from lerobot.common.robot_devices.robots.factory import make_robot
-from lerobot.common.utils.utils import init_hydra_config
 
-# Policy
-from lerobot.common.policies.act.modeling_act import ACTPolicy
-from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
+from PIL import Image
+from typing import Optional, List
 
-# LangChain / ChatGPT Agent imports
+# For generative AI bounding-box detection (example with Google)
+import google.generativeai as genai
+
+# LangChain imports
+from langchain_community.chat_models import ChatOpenAI
+# from langchain_openai import ChatOpenAI
+from langchain.agents import initialize_agent, AgentType
+from langchain.tools import Tool
+from langchain.prompts import ChatPromptTemplate
 from langchain.schema import SystemMessage
+from langchain.memory import ConversationBufferMemory
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
     MessagesPlaceholder,
 )
-from langchain_core.tools import tool
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_openai import ChatOpenAI
+
+# Robot-specific imports
+from lerobot.common.robot_devices.robots.factory import make_robot
+from lerobot.common.utils.utils import init_hydra_config
+from lerobot.common.policies.act.modeling_act import ACTPolicy
+from lerobot.common.robot_devices.utils import busy_wait, safe_disconnect
+
+# Dotenv for loading environment variables (e.g. OPENAI_API_KEY)
+from dotenv import load_dotenv, find_dotenv
 
 ################################################################################
 # Global variables
@@ -284,9 +287,15 @@ def go_to_home_position(robot, rest_position):
 def grip_the_object():
     global target_coords
     print("grip the object at", target_coords)
+    
+
+def place_the_object():
+    global target_coords
+    print("place the object at", target_coords)
+
 
 def early_stop_robot(current_angles: torch.Tensor, tolerance: float = 5,
-                     stable_duration_seconds: float = 3.0, fps: int = 30) -> bool:
+                     stable_duration_seconds: float = 10.0, fps: int = 30) -> bool:
 
     # Initialize the history list on the first call.
     if not hasattr(early_stop_robot, "history"):
@@ -359,7 +368,6 @@ def is_exit_command(command: str) -> bool:
     Uses ChatGPT to determine if the given command is an exit instruction.
     The prompt instructs the model to answer only 'yes' or 'no'.
     """
-    from langchain_openai import ChatOpenAI
     api_key = os.getenv("OPENAI_API_KEY")
     classifier = ChatOpenAI(temperature=0, model="gpt-4o-mini", api_key=api_key)
     prompt = f"""You are a classifier. Determine if the following command indicates that the user wants to exit the session. Answer only 'yes' or 'no'.
@@ -368,26 +376,25 @@ Command: "{command}"
     response = classifier.invoke(prompt)
     return "yes" in str(response).lower()
 
-################################################################################
-# ChatGPT Agent Tools
-################################################################################
+###############################################################################
+# Tools (LangChain)
+###############################################################################
 
-@tool(return_direct=True)
-def reach_the_object(object_prompt: str = "object"):
+def reach_the_object_func(object_prompt: str = "object"):
     """
-    Runs the inference control loop to reach the target object using AI-based detection.
+    Tool function to detect the object via AI and run inference to reach it.
     """
-    global policies, robot, rest_position, target_coords
-    detect_target_coords(mode="ai", object_to_detect=object_prompt)
+    global policies, robot, rest_position
+    coords = detect_target_coords(mode="ai", object_to_detect=object_prompt)
+    if coords is None:
+        return "[reach_the_object] No object found."
     config = policies["reach_the_object"]
     run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
-    return "Completed reach_the_object inference (AI mode)."
+    return "[reach_the_object] Done."
 
-@tool(return_direct=True)
-def reach_the_object_manual():
+def reach_the_object_manual_func(_input: str = ""):
     """
-    In manual mode, instructs you to double-click on the phone window to select the target.
-    After pressing ENTER when done, runs the inference control loop to reach the target.
+    Tool for manually selecting the object (double-click), then running inference to reach it.
     """
     global policies, robot, rest_position, target_coords
     coords = detect_target_coords(mode="manual", object_to_detect="object")
@@ -397,39 +404,40 @@ def reach_the_object_manual():
     run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
     return "Completed reach_the_object inference (Manual mode)."
 
-@tool(return_direct=True)
-def grip_the_object_tool():
-    """If a command such as 'grip the object', 'pick up the object', or 'pickup the object' is received, where object or mode is not specified just call grip tool
-    else, first call the 'reach_the_object' tool (or 'reach_the_object_manual' if manual mode is specified) to move toward the object, 
-    then call the 'grip_the_object_tool' to grasp it."""
-   
+def grip_the_object_func(object_name: str = ""):
+    """
+    Tool to grip or pick an already-reached object.
+    """
     grip_the_object()
-    return "Gripped the object."
+    return "[grip_the_object] Done."
+
+def place_the_object_func(object_name: str = ""):
+    """
+    Tool to place, put or keep an already gripped object.
+    """
+    place_the_object()
+    return f"Placed the object. (Name param: {object_name})"
 
 
-@tool(return_direct=True)
-def go_to_home_position_tool():
+def go_to_home_position_func(_input: str = ""):
     """
-    Returns the robot's arm to the home position.
+    Tool to move the robot arm back to its home position.
     """
-    global robot, rest_position,target_coords
+    global robot, rest_position, target_coords
     go_to_home_position(robot, rest_position)
     target_coords = None
-    return "Returned to home position."
+    return "[go_to_home_position] Done."
 
-@tool(return_direct=True)
-def detect_target_tool(object_prompt: str = "object"):
+def detect_target_func(object_prompt: str = "object"):
     """
-    Runs target detection using AI and reports the detected coordinates.
+    Tool to run AI-based detection and return the found coords (if any).
     """
     coords = detect_target_coords(mode="ai", object_to_detect=object_prompt)
     if coords is None:
-        return "No target detected."
-    else:
-        return f"Detected target at {coords}"
+        return "[detect_target] No target found."
+    return f"[detect_target] Found target at {coords}"
 
-@tool(return_direct=True)
-def describe_area():
+def describe_area_func(_input: str = ""):
     """
     Captures the current observation and uses a ChatGPT-like model to describe the area in one phrase.
     """
@@ -467,13 +475,22 @@ def describe_area():
     res = chain.invoke({"encoded_image_url": encoded_image_url})
     return res.content
 
-################################################################################
-# Voice / Typing Command Helper
-################################################################################
+###############################################################################
+# Voice / Typing Command Helpers
+###############################################################################
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Autonomous Robot ChatGPT Agent (Runtime Command Mode)")
+    parser.add_argument("--robot-path", type=str, default="lerobot/configs/robot/revobots.yaml",
+                        help="Path to the robot configuration file.")
+    parser.add_argument("--typing", action="store_true",
+                        help="Use keyboard input instead of voice commands.")
+    return parser.parse_args()
 
 def listen_voice():
     """
-    Listen for a voice command using the microphone.
+    Simple placeholder for voice input using speech_recognition.
+    If you want only typing, skip this function.
     """
     import speech_recognition as sr
     r = sr.Recognizer()
@@ -490,27 +507,23 @@ def listen_voice():
 
 def get_command(use_typing: bool):
     """
-    Returns the command from either keyboard (if use_typing is True) or voice.
+    Returns the command from keyboard if use_typing=True,
+    else tries voice input.
     """
     if use_typing:
-        command = input("Enter your command (or response): ")
-        return command
+        return input("Enter your command: ")
     else:
         return listen_voice()
 
-################################################################################
-# Main Function (Runtime Command Processing)
-################################################################################
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Autonomous Robot ChatGPT Agent (Runtime Command Mode)")
-    parser.add_argument("--robot-path", type=str, default="lerobot/configs/robot/koch.yaml",
-                        help="Path to the robot configuration file.")
-    parser.add_argument("--typing", action="store_true",
-                        help="Use keyboard input instead of voice commands.")
-    return parser.parse_args()
+###############################################################################
+# Main Function (Runtime Command Processing)
+###############################################################################
 
 def main():
+    # Load environment variables (including OPENAI_API_KEY)
+    load_dotenv(find_dotenv())
+
     global program_ending, target_coords, robot, rest_position, policies, typing_mode
 
     args = parse_args()
@@ -525,13 +538,13 @@ def main():
     robot = make_robot(robot_cfg)
     robot.connect()
 
-    # Define rest position (could also be read from the robot)
+    # Example rest position
     rest_position = [0.9667969, 128.84766, 174.99023, -16.611328, -4.8339844, 34.716797]
 
-    # Initialize policy configuration
+    # Initialize policy configuration (with your requested checkpoint path)
     policies = {
         "reach_the_object": {
-            "chkpt": "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_reach_the_marker/pretrained_model",
+            "chkpt": "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_big_robot_reach_the_object/checkpoints/last/pretrained_model",
             "control_time_s": 30
         }
     }
@@ -542,47 +555,99 @@ def main():
     cam_thread = threading.Thread(target=camera_thread_func, args=(robot,))
     cam_thread.start()
     time.sleep(2.0)
-    
-    listener_angle = Listener(on_press=update_angle)
-    listener_angle.start()
+
+    # Optional angle listener for demonstration
+    try:
+        from pynput.keyboard import Listener
+        listener_angle = Listener(on_press=update_angle)
+        listener_angle.start()
+    except ImportError:
+        print("[Warning] pynput not installed, angle control disabled.")
 
     #######################################################
-    # Create ChatGPT Agent and Tools
+    # Build Tools and Agent
     #######################################################
-    _ = load_dotenv(find_dotenv())
-    api_key = os.getenv("OPENAI_API_KEY")
-    agent_prompt = ChatPromptTemplate.from_messages([
-        ("system", "You're a helpful robot-arm assistant. Answer super concise."), 
-        ("human", "{input}"), 
-        ("placeholder", "{agent_scratchpad}"),
-    ])
-    llm_model = "gpt-4o-mini"
-    llm = ChatOpenAI(temperature=0.1, model=llm_model, api_key=api_key)
-    tools_list = [reach_the_object, reach_the_object_manual, grip_the_object_tool,go_to_home_position_tool, detect_target_tool, describe_area]
-    agent = create_tool_calling_agent(llm, tools_list, agent_prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools_list, verbose=True)
+    tools = [
+        Tool(
+            name="reach_the_object",
+            func=reach_the_object_func,
+            description="Detect and reach the specified object (AI-based)."
+        ),
+        Tool(
+            name="reach_the_object_manual",
+            func=reach_the_object_manual_func,
+            description="Manually double-click to select object, then reach it."
+        ),
+        Tool(
+            name="grip_the_object",
+            func=grip_the_object_func,
+            description="Grip or pick the already-reached object."
+        ),
+        Tool(
+            name="place_the_object",
+            func=place_the_object_func,
+            description="Place, put or keep the already gripped object."
+        ),
+        Tool(
+            name="go_to_home_position",
+            func=go_to_home_position_func,
+            description="Move the robot's arm to the home position."
+        ),
+        Tool(
+            name="detect_target",
+            func=detect_target_func,
+            description="Detect the specified object and return its coordinates."
+        ),
+        Tool(
+            name="describe_area",
+            func=describe_area_func,
+            description="Describe what is seen through the phone camera in a short phrase."
+        ),
+    ]
+
+    # Retrieve your OpenAI API key from the environment
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+
+    # Set up an LLM
+    llm = ChatOpenAI(
+        temperature=0.0,
+        model_name="gpt-4o-mini",
+        openai_api_key=openai_api_key
+    )
+
+    # Conversation memory (optional)
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+    # Create a "Chat Conversational" agent with tools
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.CHAT_CONVERSATIONAL_REACT_DESCRIPTION,
+        verbose=True,
+        memory=memory
+    )
 
     #######################################################
-    # Runtime Command Loop (Voice or Typing-based)
+    # Runtime Command Loop (Voice or Typing)
     #######################################################
-    print("Entering runtime command loop. Say or type 'exit' to quit.")
+    print("Entering runtime command loop. Type or say 'exit' to quit.")
     while True:
-        if typing_mode:
-            command = input("Enter your command (or response): ")
-        else:
-            command = listen_voice()
+        command = get_command(typing_mode)
         if command is None:
             continue
         if is_exit_command(command):
             break
-        response = agent_executor.invoke({"input": command})
-        output = response.get("output", "")
-        print("Response:", output)
-        say(output)
-    
-    #######################################################
+
+        try:
+            # response = agent({"input": command})
+            response = agent.run(command)
+            print("[Agent Reply]", response)
+            say(response)
+        except Exception as e:
+            print("[Agent Error]", str(e))
+            say("I'm sorry, I encountered an error.")
+
     # Cleanup
-    #######################################################
     program_ending = True
     cam_thread.join()
     robot.disconnect()

@@ -30,21 +30,34 @@ python lerobot/scripts/control_robot.py record \
   --robot-path lerobot/configs/robot/revobots.yaml \
   --fps 30 \
   --root data \
-  --repo-id koch_big_robot \
+  --repo-id koch_big_robot_test \
   --tags tutorial \
   --warmup-time-s 300 \
   --episode-time-s 300 \
-  --reset-time-s 300 \
+  --reset-time-s 0 \
   --num-episodes 2 \
   --push-to-hub 0
   
   
+  python lerobot/scripts/control_robot.py record \
+   --robot-path lerobot/configs/robot/revobots.yaml \
+   --fps 30 \
+   --root data \
+   --repo-id revobots_grip_the_object \
+   --tags tutorial \
+   --warmup-time-s 300 \
+   --episode-time-s 300 \
+   --reset-time-s 0 \
+   --num-episodes 50 \
+   --push-to-hub 0
+  
+  
   DATA_DIR=data python lerobot/scripts/train.py \
-  dataset_repo_id=${HF_USER}/koch_reach_the_object \
-  policy=act_koch_real \
+  dataset_repo_id=revobots_grip_the_object \
+  policy=act_revobots_added_camera.yaml \
   env=koch_real \
-  hydra.run.dir=outputs/train/act_koch_reach_the_object \
-  hydra.job.name=act_koch_test \
+  hydra.run.dir=outputs/train/act_revobots_grip_the_object \
+  hydra.job.name=act_revobots_grip_the_object \
   device=cuda
   
   cd aditya/aditya_lerobot
@@ -54,5 +67,5 @@ python lerobot/scripts/control_robot.py record \
   python lerobot/scripts/control_robot.py teleoperate \
   --robot-path lerobot/configs/robot/koch.yaml
 
-python lerobot/scripts/control_robot.py replay     --fps 30     --root data     --repo-id koch_big_robot     --episode 1 --robot-path lerobot/configs/robot/revobots.yaml
+python lerobot/scripts/control_robot.py replay     --fps 30     --root data     --repo-id koch_big_robot_reach_the_object    --episode 1 --robot-path lerobot/configs/robot/koch.yaml
 """

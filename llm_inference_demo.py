@@ -26,8 +26,8 @@ from typing import Optional, List
 import google.generativeai as genai
 
 # LangChain imports
-from langchain_community.chat_models import ChatOpenAI
-# from langchain_openai import ChatOpenAI
+# from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.agents import initialize_agent, AgentType
 from langchain.tools import Tool
 from langchain.prompts import ChatPromptTemplate
@@ -284,18 +284,18 @@ def go_to_home_position(robot, rest_position):
         robot.follower_arms['main'].write("Goal_Position", intermediate_pos)
         time.sleep(0.05)
 
-# def grip_the_object():
-#     global target_coords
-#     print("grip the object at", target_coords)
+def grip_the_object():
+    global target_coords
+    print("grip the object at", target_coords)
     
 
-# def place_the_object():
-#     global target_coords
-#     print("place the object at", target_coords)
+def place_the_object():
+    global target_coords
+    print("place the object at", target_coords)
 
 
 def early_stop_robot(current_angles: torch.Tensor, tolerance: float = 5,
-                     stable_duration_seconds: float = 6.0, fps: int = 30) -> bool:
+                     stable_duration_seconds: float = 10.0, fps: int = 30) -> bool:
 
     # Initialize the history list on the first call.
     if not hasattr(early_stop_robot, "history"):
@@ -333,7 +333,7 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
     The robot captures an observation, marks the selected target (if any), computes an action using the policy,
     and sends the action to the robot.
     """
-    global use_manual_detection, target_coords
+    global use_manual_detection
     fps = 30
     device = "cuda"  # or "cpu"
     policy = ACTPolicy.from_pretrained(chkpt)
@@ -361,7 +361,6 @@ def run_inference(robot, rest_position, chkpt, control_time_s):
         busy_wait(max(0, 1.0 / fps - dt))
     
     use_manual_detection = False
-    target_coords = None
     print("[Inference] Complete.")
     
 def is_exit_command(command: str) -> bool:
@@ -407,24 +406,17 @@ def reach_the_object_manual_func(_input: str = ""):
 
 def grip_the_object_func(object_name: str = ""):
     """
-    Tool to grip or pick an object.
+    Tool to grip or pick an already-reached object.
     """
-    global policies, robot, rest_position
-    config = policies["grip_the_object"]
-    run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
+    grip_the_object()
     return "[grip_the_object] Done."
 
-def place_the_object_func(object_prompt: str = "object"):
+def place_the_object_func(object_name: str = ""):
     """
-    Tool to place, put or keep an object.
+    Tool to place, put or keep an already gripped object.
     """
-    global policies, robot, rest_position
-    coords = detect_target_coords(mode="ai", object_to_detect=object_prompt)
-    if coords is None:
-        return "[place_the_object] No object found."
-    config = policies["place_the_object"]
-    run_inference(robot, rest_position, config["chkpt"], config["control_time_s"])
-    return f"Placed the object. (Name param: {object_prompt})"
+    place_the_object()
+    return f"Placed the object. (Name param: {object_name})"
 
 
 def go_to_home_position_func(_input: str = ""):
@@ -547,21 +539,12 @@ def main():
     robot.connect()
 
     # Example rest position
-    rest_position = [ -0.43945312, 117.509766, 118.916016, 85.78125, -4.482422, 34.716797  ]
+    rest_position = [0.9667969, 128.84766, 174.99023, -16.611328, -4.8339844, 34.716797]
 
     # Initialize policy configuration (with your requested checkpoint path)
     policies = {
         "reach_the_object": {
-            "chkpt": "/home/revolabs/aditya/aditya_lerobot/outputs/train/revobots_reach_the_object/checkpoints/last/pretrained_model",
-            "control_time_s": 30
-        },
-        "place_the_object": {
-            "chkpt": "/home/revolabs/aditya/aditya_lerobot/outputs/train/revobots_reach_the_object/checkpoints/last/pretrained_model",
-            "control_time_s": 30
-        },
-        
-        "grip_the_object": {
-            "chkpt": "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_revobots_grip_the_object/checkpoints/last/pretrained_model",
+            "chkpt": "/home/revolabs/aditya/aditya_lerobot/outputs/train/act_koch_big_robot_reach_the_object/checkpoints/last/pretrained_model",
             "control_time_s": 30
         }
     }
@@ -598,12 +581,12 @@ def main():
         Tool(
             name="grip_the_object",
             func=grip_the_object_func,
-            description="Grip or pick the object."
+            description="Grip or pick the already-reached object."
         ),
         Tool(
             name="place_the_object",
             func=place_the_object_func,
-            description="Place, put or keep the object."
+            description="Place, put or keep the already gripped object."
         ),
         Tool(
             name="go_to_home_position",

@@ -14,6 +14,8 @@ from collections import namedtuple
 import numpy as np
 
 write_call_counter = 0
+pause_gripper_angle = 32
+
 RobotData = namedtuple("RobotData", [
     "position",
     "delta",
@@ -53,6 +55,9 @@ class RevobotRobotBus:
             RobotData(0, 0, 0, 0, 0, 0, 0, 0, 0, 0) for _ in range(8)
         ]
         self.joint67Status = Joint67Status(0, 0, 0, 0)
+        rest_position = [ -0.43945312, 117.509766, 118.916016, 85.78125, -4.482422, 34.716797  ]
+
+        self.temp_values = rest_position
 
 
     def find_motor_indices(self):
@@ -237,9 +242,9 @@ class RevobotRobotBus:
         Different joints use different scaling and offset adjustments.
         """
         if index == 5:  # 6th position (0-based index)
-            return int((-31.5 - int(value)) * 88.8889)
+            return int((67.5 - int(value)) * 88.8889)
         elif index == 6:  # 7th position (0-based index)
-            return int(value * 740)
+            return int(value * 700)
         elif index == 1:
             return int((90 - int(value)) * 3600)
         elif index == 3:
@@ -248,8 +253,14 @@ class RevobotRobotBus:
             return int(value * 3600)
 
     def write(self, data_name:str, values=[], motor_names=None):
-        global write_call_counter
+        global write_call_counter, pause_gripper_angle
         write_call_counter += 1
+        
+        # # to pause during gripping at time of teleop
+        # if values[5] < pause_gripper_angle:
+        #     values[:5] = self.temp_values[:5]  # fallback to previous
+        # else:
+        #     self.temp_values = values.copy()
         # print(np.array(values).tolist())
         # print(values)
         values_list = np.array(values).tolist()
@@ -274,16 +285,27 @@ class RevobotRobotBus:
         """ Add all the initialisation parameters during the socket connection
             these parameters only execute once for every socket connection."""
             
+        # init_config_lst = [
+        #         "S AngularSpeedStartAndEnd 10000", 
+        #         "S AngularSpeed 10000",
+        #         "S AngularAcceleration 10000",
+        #         "S J1_PID_P 0.13",
+        #         "S J2_PID_P 0.11",
+        #         "S J3_PID_P 0.11",
+        #         "S J4_PID_P 0.1",
+        #         "S J5_PID_P 0.5"
+        #         ]
+        
         init_config_lst = [
-                "S AngularSpeedStartAndEnd 100000", 
-                "S AngularSpeed 82500",
-                "S AngularAcceleration 65000",
-                "S J1_PID_P 0.16",
-                "S J2_PID_P 0.30",
-                "S J3_PID_P 0.45",
-                "S J4_PID_P 0.5",
+                "S AngularSpeedStartAndEnd 10000", 
+                "S AngularSpeed 10000",
+                "S AngularAcceleration 10000",
+                "S J1_PID_P 0.10",
+                "S J2_PID_P 0.10",
+                "S J3_PID_P 0.10",
+                "S J4_PID_P 0.1",
                 "S J5_PID_P 0.5"
-               ]
+                ]
         
         for i in init_config_lst:
             command = f"xxx xxx xxx xxx {i};"

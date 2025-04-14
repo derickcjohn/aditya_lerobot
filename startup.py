@@ -57,7 +57,10 @@ robot = ManipulatorRobot(
 )
 robot.connect()
 # rest_position = follower_arm.read("Present_Position")
-rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
+
+# rest_position = leader_arm.read("Present_Position")
+# rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
+rest_position = [ -0.43945312, 117.509766, 118.916016, 85.78125, -4.482422, 34.716797  ]
 
 inference_time_s = 10
 fps = 30

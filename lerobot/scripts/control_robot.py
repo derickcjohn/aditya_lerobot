@@ -140,7 +140,9 @@ import numpy as np
 import cv2
 import math
 import threading
+from app import set_status,get_status
 
+set_status("starting, hold on tight!")
 ################################################################################
 # Utility Functions
 ################################################################################
@@ -281,6 +283,7 @@ def calibrate(robot: Robot, arms: list[str] | None):
 def teleoperate(
     robot: Robot, fps: int | None = None, teleop_time_s: float | None = None, display_cameras: bool = False
 ):
+    set_status("Teleoperation Running")
     control_loop(
         robot,
         control_time_s=teleop_time_s,
@@ -288,6 +291,7 @@ def teleoperate(
         teleoperate=True,
         display_cameras=display_cameras,
     )
+    set_status("")
     
 
 @safe_disconnect
@@ -318,7 +322,8 @@ def record(
     policy = None
     device = None
     use_amp = None
-
+    
+    set_status("starting recording with marker!")
     # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
@@ -354,6 +359,7 @@ def record(
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
+    set_status("warming up! good for health.")
     log_say("Warmup record", play_sounds)
     warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
 
@@ -365,10 +371,12 @@ def record(
             break
         
         print("teleoperate to desired position")
+        set_status("Teleop to initial postion(or leave at home). Press right for next setp")
         log_say("teleoperate to desired position", play_sounds)
         control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
 
         episode_index = dataset["num_episodes"]
+        set_status(f"Recording episode {episode_index}. Press right for next and left for redo")
         log_say(f"Recording episode {episode_index}", play_sounds)
         record_episode(
             dataset=dataset,
@@ -389,9 +397,9 @@ def record(
         if not events["stop_recording"] and (
             (episode_index < num_episodes - 1) or events["rerecord_episode"]
         ):
-            print("teleoperate to home position")
-            log_say("teleoperate to home position", play_sounds)
-            control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
+            # print("teleoperate to home position")
+            # log_say("teleoperate to home position", play_sounds)
+            # control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
             
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s)
@@ -410,7 +418,9 @@ def record(
             break
 
     log_say("Stop recording", play_sounds, blocking=True)
+    set_status("Recording stopped")
     stop_recording(robot, listener, display_cameras)
+    set_status("")
 
     lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
 
@@ -446,7 +456,8 @@ def record_with_marker(
     policy = None
     device = None
     use_amp = None
-
+    
+    set_status("starting recording with marker!")
     # Load pretrained policy
     if pretrained_policy_name_or_path is not None:
         policy, policy_fps, device, use_amp = init_policy(pretrained_policy_name_or_path, policy_overrides)
@@ -482,6 +493,7 @@ def record_with_marker(
     # 2. give times to the robot devices to connect and start synchronizing,
     # 3. place the cameras windows on screen
     enable_teleoperation = policy is None
+    set_status("warming up! good for health.")
     log_say("Warmup record", play_sounds)
     warmup_record(robot, events, enable_teleoperation, warmup_time_s, display_cameras, fps)
 
@@ -492,16 +504,20 @@ def record_with_marker(
         if dataset["num_episodes"] >= num_episodes:
             break
         
-        print("put marker and use top and down button for angle")
-        log_say("put marker", play_sounds)
-        detect_target_coords(robot,events)
         
         print("teleoperate to desired position")
+        set_status("Teleop to initial postion(or leave at home). Press right for next setp")
         log_say("teleoperate to desired position", play_sounds)
         control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
         
+        print("put marker and use top and down button for angle")
+        set_status("put marker and use top and down button for angle. Press right once done")
+        log_say("put marker", play_sounds)
+        detect_target_coords(robot,events)
+        
         
         episode_index = dataset["num_episodes"]
+        set_status(f"Recording episode {episode_index}. Press right for next and left for redo")
         log_say(f"Recording episode {episode_index}", play_sounds)
         record_episode(
             dataset=dataset,
@@ -524,9 +540,10 @@ def record_with_marker(
         if not events["stop_recording"] and (
             (episode_index < num_episodes - 1) or events["rerecord_episode"]
         ):
-            print("teleoperate to home position")
-            log_say("teleoperate to home position", play_sounds)
-            control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
+            # print("teleoperate to home position")
+            # set_status("Reset env. change object pos and robot to home(if required). Press right")
+            # log_say("teleoperate to home position", play_sounds)
+            # control_loop(robot=robot,teleoperate=True,display_cameras=display_cameras,events=events,fps=fps)
             
             log_say("Reset the environment", play_sounds)
             reset_environment(robot, events, reset_time_s)
@@ -545,8 +562,10 @@ def record_with_marker(
             break
 
     log_say("Stop recording", play_sounds, blocking=True)
+    set_status("Recording stopped")
     stop_recording(robot, listener, display_cameras)
-
+    set_status("")
+    
     lerobot_dataset = create_lerobot_dataset(dataset, run_compute_stats, push_to_hub, tags, play_sounds)
 
     log_say("Exiting", play_sounds)
@@ -557,6 +576,7 @@ def record_with_marker(
 def replay(
     robot: Robot, episode: int, fps: int | None = None, root="data", repo_id="lerobot/debug", play_sounds=True
 ):
+    set_status("Replaying episode")
     # TODO(rcadene, aliberts): refactor with control_loop, once `dataset` is an instance of LeRobotDataset
     # TODO(rcadene): Add option to record logs
     local_dir = Path(root) / repo_id
@@ -583,6 +603,8 @@ def replay(
 
         dt_s = time.perf_counter() - start_episode_t
         log_control_info(robot, dt_s, fps=fps)
+    
+    set_status("")
 
 
 if __name__ == "__main__":

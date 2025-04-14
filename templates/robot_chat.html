@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Robot Chat</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 2rem; }
+    .chat-box { max-width: 600px; margin: auto; background: white; padding: 1rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .message { margin-bottom: 1rem; }
+    .user { text-align: right; color: blue; }
+    .bot { text-align: left; color: green; }
+    .input-group { display: flex; gap: 0.5rem; margin-top: 1rem; }
+    input { flex: 1; padding: 0.5rem; font-size: 1rem; }
+    button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="chat-box">
+    <h2>Robot Chat Interface</h2>
+    <div id="chat"></div>
+    <form id="chat-form" class="input-group">
+      <input type="text" id="command" placeholder="Type your command..." required />
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById('chat-form');
+    const chat = document.getElementById('chat');
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('command');
+      const command = input.value.trim();
+      if (!command) return;
+
+      addMessage('user', command);
+      input.value = '';
+
+      const res = await fetch('/api/robot-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command })
+      });
+
+      const data = await res.json();
+      addMessage('bot', data.reply);
+    };
+
+    function addMessage(role, content) {
+      const msg = document.createElement('div');
+      msg.className = `message ${role}`;
+      msg.textContent = content;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+  </script>
+</body>
+</html>

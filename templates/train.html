@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Robot Training</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center py-10">
+  <div class="bg-white shadow-xl rounded-2xl w-full max-w-3xl p-6">
+    <h1 class="text-2xl font-bold text-center mb-6 text-gray-800">Train the Robot</h1>
+
+    <div class="text-center mb-4">
+      <a href="/" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">← Back to Home</a>
+    </div>
+
+    <div class="mb-4">
+      <label class="block mb-1 font-medium">Training Type</label>
+      <select id="trainType" class="border rounded p-2 w-full">
+        <option value="train_single">Train Single</option>
+        <option value="train_hierarchical">Train Hierarchical</option>
+      </select>
+    </div>
+    
+    <form id="train-form" class="space-y-4"></form>
+
+    <div class="flex justify-center mt-6">
+      <button onclick="runTrain()" class="bg-green-600 text-white px-6 py-2 rounded-xl shadow hover:bg-green-700 transition">Run Training</button>
+    </div>
+    <p id="train-status" class="text-blue-600 font-semibold text-center mt-4 hidden"></p>
+
+    <div class="mt-8">
+      <h2 class="text-lg font-semibold text-gray-700">Training Output</h2>
+      <pre id="train-output" class="bg-gray-900 text-green-300 text-sm p-4 rounded-xl overflow-auto h-64 mt-2"></pre>
+    </div>
+  </div>
+
+  <script>
+    function fetchArgs() {
+      fetch("/get_train_args", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+          const form = document.getElementById("train-form");
+          form.innerHTML = "";
+  
+          for (const [key, val] of Object.entries(data)) {
+            if (key === "dataset_repo_id") {
+              form.innerHTML += `
+                <div class="flex flex-col">
+                  <label class="text-gray-700 font-medium mb-1" for="${key}">${key}</label>
+                  <select id="${key}" name="${key}" class="border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option>Loading...</option>
+                  </select>
+                </div>
+              `;
+  
+              fetch("/list_datasets")
+                .then(res => res.json())
+                .then(foldersData => {
+                  const dropdown = document.getElementById(key);
+                  dropdown.innerHTML = "";
+                  if (foldersData.folders) {
+                    foldersData.folders.forEach(folder => {
+                      const option = document.createElement("option");
+                      option.value = folder;
+                      option.textContent = folder;
+                      dropdown.appendChild(option);
+                    });
+                  } else {
+                    dropdown.innerHTML = `<option disabled>No datasets found</option>`;
+                  }
+                })
+                .catch(err => {
+                  console.error("Error loading datasets:", err);
+                  const dropdown = document.getElementById(key);
+                  dropdown.innerHTML = `<option disabled>Error loading datasets</option>`;
+                });
+  
+            } else {
+              form.innerHTML += `
+                <div class="flex flex-col">
+                  <label class="text-gray-700 font-medium mb-1" for="${key}">${key}</label>
+                  <input class="border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" name="${key}" value="${val}" />
+                </div>
+              `;
+            }
+          }
+        });
+    }
+  
+    function runTrain() {
+      const inputs = document.querySelectorAll("#train-form input, #train-form select");
+      const args = {};
+      inputs.forEach(input => args[input.name] = input.value);
+  
+      const selectedType = document.getElementById("trainType").value;
+  
+      const trainStatus = document.getElementById("train-status");
+      const trainOutput = document.getElementById("train-output");
+  
+      trainStatus.classList.remove("hidden");
+      trainStatus.textContent = "🚀 Training is starting...";
+      trainOutput.innerText = "";
+  
+      fetch("/run_train", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ args: args, train_type: selectedType })
+      })
+      .then(res => res.json())
+      .then(output => {
+        if (output.status === "started") {
+          trainStatus.textContent = "🏋️ Training is running...";
+          streamTrainOutput();
+        } else {
+          trainStatus.textContent = "❌ Failed to start training.";
+          trainOutput.innerText = "Error:\n" + (output.error || "Unknown error");
+        }
+      })
+      .catch(err => {
+        trainStatus.textContent = "❌ Training crashed!";
+        console.error(err);
+      });
+    }
+  
+    function streamTrainOutput() {
+      const trainOutput = document.getElementById("train-output");
+      const source = new EventSource("/stream_train_output");
+  
+      source.onmessage = function(event) {
+        trainOutput.innerText += event.data + "\n";
+        trainOutput.scrollTop = trainOutput.scrollHeight;
+      };
+  
+      source.onerror = function(err) {
+        console.error("Stream error", err);
+        source.close();
+      };
+    }
+  
+    // Fetch arguments on page load
+    fetchArgs();
+  </script>
+</body>
+</html>

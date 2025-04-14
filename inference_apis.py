@@ -16,6 +16,8 @@ import threading
 from PIL import Image
 from typing import List
 import numpy as np
+import argparse
+
 
 # For generative AI bounding-box detection (if needed)
 import google.generativeai as genai
@@ -29,6 +31,9 @@ from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCa
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 from lerobot.scripts.control_robot import busy_wait
 from lerobot.common.policies.act.modeling_act import ACTPolicy
+from lerobot.common.robot_devices.robots.factory import make_robot
+from lerobot.common.utils.utils import init_hydra_config
+
 
 
 ################################################################################
@@ -36,6 +41,7 @@ from lerobot.common.policies.act.modeling_act import ACTPolicy
 ################################################################################
 
 program_ending = False
+marker_needed = False
 manual_detection = True  # If True -> double-click in "phone" window for coords
 
 # In manual_detection mode, we store the user's double-click here
@@ -321,13 +327,13 @@ def run_inference(robot, rest_position):
     return the arm to the rest position. This includes drawing
     the user-selected marker onto the phone image during inference.
     """
-    global clicked_coords
+    global clicked_coords, model
 
-    inference_time_s = 10
+    inference_time_s = 30
     fps = 30
     device = "cuda"  # or "cpu"
 
-    ckpt_path = "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_reach_the_marker/pretrained_model"
+    ckpt_path = model
     # ckpt_path = "/home/revolabs/cs_capstone/lerobot/outputs/train/act_koch_follow_marker_2/last/pretrained_model"
 
     policy = ACTPolicy.from_pretrained(ckpt_path)
@@ -369,6 +375,15 @@ def run_inference(robot, rest_position):
     print("[Inference] Complete. Returning to rest position.")
     # Use the helper function to move home
     go_to_home_position(robot, rest_position)
+    
+    
+def parse_args():
+    parser = argparse.ArgumentParser(description="Autonomous Robot ChatGPT Agent (Runtime Command Mode)")
+    parser.add_argument("--robot-path", type=str, default="lerobot/configs/robot/revobots.yaml",
+                        help="Path to the robot configuration file.")
+    parser.add_argument("--model",  type=str, 
+                        help="path of model to run uptil last/pretrained.")
+    return parser.parse_args()
 
 
 ################################################################################
@@ -376,58 +391,66 @@ def run_inference(robot, rest_position):
 ################################################################################
 
 def main():
-    global program_ending, clicked_coords, manual_detection
+    global program_ending, clicked_coords, manual_detection, model
+    
+    args = parse_args()
+    model = args.model
 
     say("Starting up...", blocking=False)
 
     #######################################################
     # Setup Robot
     #######################################################
-    
-    leader_port = "/dev/ttyACM1"
-    follower_port = "/dev/ttyACM0"
-
-    leader_arm = DynamixelMotorsBus(
-        port=leader_port,
-        motors={
-            "shoulder_pan": (1, "xl330-m077"),
-            "shoulder_lift": (2, "xl330-m077"),
-            "elbow_flex": (3, "xl330-m077"),
-            "wrist_flex": (4, "xl330-m077"),
-            "wrist_roll": (5, "xl330-m077"),
-            "gripper": (6, "xl330-m077"),
-        },
-    )
-
-    follower_arm = DynamixelMotorsBus(
-        port=follower_port,
-        motors={
-            "shoulder_pan": (1, "xl430-w250"),
-            "shoulder_lift": (2, "xl430-w250"),
-            "elbow_flex": (3, "xl330-m288"),
-            "wrist_flex": (4, "xl330-m288"),
-            "wrist_roll": (5, "xl330-m288"),
-            "gripper": (6, "xl330-m288"),
-        },
-    )
-
-    robot = ManipulatorRobot(
-        leader_arms={"main": leader_arm},
-        follower_arms={"main": follower_arm},
-        calibration_dir=".cache/calibration/koch",
-        cameras={
-            # "phone": OpenCVCamera("/dev/video12", fps=30, width=640, height=480),
-            # "laptop": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
-            "phone": IntelRealSenseCamera("828612060404", fps=30, width=640, height=480),
-            "laptop": IntelRealSenseCamera("816612060176", fps=30, width=640, height=480),
-        },
-    )
-
+    robot_cfg = init_hydra_config(args.robot_path)
+    robot = make_robot(robot_cfg)
     robot.connect()
+    
+    # leader_port = "/dev/ttyACM1"
+    # follower_port = "/dev/ttyACM0"
+
+    # leader_arm = DynamixelMotorsBus(
+    #     port=leader_port,
+    #     motors={
+    #         "shoulder_pan": (1, "xl330-m077"),
+    #         "shoulder_lift": (2, "xl330-m077"),
+    #         "elbow_flex": (3, "xl330-m077"),
+    #         "wrist_flex": (4, "xl330-m077"),
+    #         "wrist_roll": (5, "xl330-m077"),
+    #         "gripper": (6, "xl330-m077"),
+    #     },
+    # )
+
+    # follower_arm = DynamixelMotorsBus(
+    #     port=follower_port,
+    #     motors={
+    #         "shoulder_pan": (1, "xl430-w250"),
+    #         "shoulder_lift": (2, "xl430-w250"),
+    #         "elbow_flex": (3, "xl330-m288"),
+    #         "wrist_flex": (4, "xl330-m288"),
+    #         "wrist_roll": (5, "xl330-m288"),
+    #         "gripper": (6, "xl330-m288"),
+    #     },
+    # )
+
+    # robot = ManipulatorRobot(
+    #     leader_arms={"main": leader_arm},
+    #     follower_arms={"main": follower_arm},
+    #     calibration_dir=".cache/calibration/koch",
+    #     cameras={
+    #         # "phone": OpenCVCamera("/dev/video12", fps=30, width=640, height=480),
+    #         # "laptop": OpenCVCamera("/dev/video10", fps=30, width=640, height=480),
+    #         "phone": IntelRealSenseCamera("828612060404", fps=30, width=640, height=480),
+    #         "laptop": IntelRealSenseCamera("816612060176", fps=30, width=640, height=480),
+    #     },
+    # )
+
+    # robot.connect()
 
     # Read the rest position here so we can pass it to the inference function
     # rest_position = follower_arm.read("Present_Position")
-    rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
+    # rest_position = [  0.9667969 ,128.84766 ,  174.99023,   -16.611328,   -4.8339844  ,34.716797 ]
+    rest_position = [ -0.43945312, 117.509766, 118.916016, 85.78125, -4.482422, 34.716797  ]
+
 
     #######################################################
     # Start Camera Thread
@@ -441,7 +464,8 @@ def main():
     #######################################################
     # DETECTION (Manual or AI) as a function
     #######################################################
-    detect_target_coords()  # sets clicked_coords internally
+    if marker_needed:
+        detect_target_coords()  # sets clicked_coords internally
 
     #######################################################
     # RUN INFERENCE

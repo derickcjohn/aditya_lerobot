@@ -278,7 +278,8 @@ def add_frame(dataset, observation, action):
     # Save images
     image_writer = dataset["image_writer"]
     for key in img_keys:
-        imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
+        group, cam_name = key.split(".", 1)
+        imgs_dir = videos_dir / group / f"{cam_name}_episode_{episode_index:06d}"
         async_save_image(
             image_writer,
             image=observation[key],
@@ -290,7 +291,7 @@ def add_frame(dataset, observation, action):
 
         if video:
             fname = f"{key}_episode_{episode_index:06d}.mp4"
-            frame_info = {"path": f"videos/{fname}", "timestamp": frame_index / fps}
+            frame_info = {"path": f"videos/{group}{fname}", "timestamp": frame_index / fps}
         else:
             frame_info = str(imgs_dir / f"frame_{frame_index:06d}.png")
 
@@ -354,10 +355,12 @@ def encode_videos(dataset, image_keys, play_sounds):
     # Use ffmpeg to convert frames stored as png into mp4 videos
     for episode_index in tqdm.tqdm(range(num_episodes)):
         for key in image_keys:
+            group, cam_name = key.split(".", 1)
             # key = f"observation.images.{name}"
-            tmp_imgs_dir = videos_dir / f"{key}_episode_{episode_index:06d}"
-            fname = f"{key}_episode_{episode_index:06d}.mp4"
-            video_path = local_dir / "videos" / fname
+            tmp_imgs_dir = videos_dir / group / f"{cam_name}_episode_{episode_index:06d}"
+            fname = f"{cam_name}_episode_{episode_index:06d}.mp4"
+            video_path = local_dir / "videos" / group / fname
+            video_path.parent.mkdir(parents=True, exist_ok=True)
             if video_path.exists():
                 # Skip if video is already encoded. Could be the case when resuming data recording.
                 continue

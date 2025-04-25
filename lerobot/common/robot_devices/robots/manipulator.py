@@ -541,8 +541,12 @@ class ManipulatorRobot:
         obs_dict, action_dict = {}, {}
         obs_dict["observation.state"] = state
         action_dict["action"] = action
+        camera_group_map = {
+            "laptop": "group1",      
+            "phone": "group2",   
+        }
         for name in self.cameras:
-            obs_dict[f"{observation.images.{name}"] = images[name]
+            obs_dict[f"{camera_group_map[name]}.observation.images.{name}"] = images[name]
 
         return obs_dict, action_dict
 
